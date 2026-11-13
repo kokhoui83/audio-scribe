@@ -1,0 +1,18 @@
+# NVIDIA GPU override. Needs the NVIDIA Container Toolkit on the Docker host.
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+services:
+  worker:
+    build:
+      args:
+        TORCH_VARIANT: cu126
+        TORCH_VERSION: 2.14.1  # newest PyTorch built for CUDA 12.6
+    image: audio-scribe-worker-gpu
+    environment:
+      DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

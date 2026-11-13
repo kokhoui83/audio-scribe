@@ -1,0 +1,80 @@
+name: audio-scribe
+
+x-env: &env
+  DATABASE_URL: postgresql://scribe:scribe@db:5432/scribe
+  DATA_DIR: /data
+  HF_TOKEN: ${HF_TOKEN:-}
+  DIARIZE: ${DIARIZE:-true}
+  DIARIZATION_MODEL: ${DIARIZATION_MODEL:-pyannote/speaker-diarization-community-1}
+  WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+  WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-auto}
+  WHISPER_BATCH_SIZE: ${WHISPER_BATCH_SIZE:-0}
+  CPU_THREADS: ${CPU_THREADS:-0}
+  DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-}
+  OUTPUT_FORMATS: ${OUTPUT_FORMATS:-md}
+  ARCHIVE_ORIGINALS: ${ARCHIVE_ORIGINALS:-true}
+  MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+  LEASE_SECONDS: ${LEASE_SECONDS:-120}
+  STABLE_SECONDS: ${STABLE_SECONDS:-5}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scribe
+      POSTGRES_PASSWORD: scribe
+      POSTGRES_DB: scribe
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scribe -d scribe"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: { context: ., target: api }
+    image: audio-scribe-api
+    restart: unless-stopped
+    environment: *env
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-8090}:8000"
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  watcher:
+    image: audio-scribe-api
+    restart: unless-stopped
+    command: ["python", "-m", "scribe.entrypoints.watcher"]
+    environment: *env
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+
+  worker:
+    build: { context: ., target: worker }
+    image: audio-scribe-worker
+    restart: unless-stopped
+    environment:
+      <<: *env
+      DEVICE: cpu
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - models:/models
+    stop_grace_period: 30s
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  db:
+  models:

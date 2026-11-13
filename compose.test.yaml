@@ -1,0 +1,27 @@
+# Runs lint + the whole test suite, including the PostgreSQL contract tests:
+#   docker compose -f compose.test.yaml run --rm --build test
+name: audio-scribe-test
+services:
+  testdb:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: scribe
+      POSTGRES_PASSWORD: scribe
+      POSTGRES_DB: scribe_test
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scribe -d scribe_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  test:
+    build: { context: ., target: test }
+    image: audio-scribe-test
+    environment:
+      TEST_DATABASE_URL: postgresql://scribe:scribe@testdb:5432/scribe_test
+    volumes:
+      - ./scribe:/app/scribe:ro
+      - ./tests:/app/tests:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    depends_on:
+      testdb: { condition: service_healthy }

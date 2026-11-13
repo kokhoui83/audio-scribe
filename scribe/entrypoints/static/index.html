@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Scribe</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1c2330; --muted: #667085; --line: #e3e6eb;
+    --accent: #2f6fed; --ok: #17804d; --warn: #b26a00; --bad: #c0362c; --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151b; --panel: #1b1f27; --text: #e7eaf0; --muted: #98a2b3; --line: #2b313c;
+            --accent: #6b9bff; --ok: #4cc38a; --warn: #f0b354; --bad: #ff7b72; --chip: #262c37; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; flex: 1; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--chip); border-radius: 999px;
+          padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .ok .dot, .dot.ok { background: var(--ok); } .bad .dot { background: var(--bad); } .warn .dot { background: var(--warn); }
+  .banner { border-left: 4px solid var(--bad); padding: 10px 14px; background: var(--panel); border-radius: 6px;
+            margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop.over { border-color: var(--accent); color: var(--accent); }
+  .options { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; align-items: end; }
+  label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  label.inline { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
+  input[type=text], input[type=number] { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+          border-radius: 6px; padding: 5px 8px; width: 130px; }
+  button, a.button { font: inherit; font-size: 13px; color: var(--text); background: var(--chip); border: 1px solid var(--line);
+          border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button:hover, a.button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  td.name { max-width: 300px; overflow-wrap: anywhere; }
+  td.actions { white-space: nowrap; text-align: right; }
+  .sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .error { color: var(--bad); }
+  .status-done { color: var(--ok); } .status-failed { color: var(--bad); }
+  .status-processing { color: var(--accent); } .status-cancelled { color: var(--muted); }
+  progress { width: 120px; height: 6px; vertical-align: middle; accent-color: var(--accent); }
+  .empty { color: var(--muted); text-align: center; padding: 28px; }
+  dialog { width: min(860px, 94vw); max-height: 90vh; border: 1px solid var(--line); border-radius: 12px; padding: 0;
+           background: var(--panel); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .dialog-head { position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line);
+                 padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .dialog-head h2 { flex: 1; margin: 0; overflow-wrap: anywhere; }
+  .dialog-body { padding: 16px 18px 24px; }
+  .speakers { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 16px; }
+  .turn { margin: 0 0 14px; }
+  .turn .who { font-weight: 600; margin-right: 8px; }
+  .turn .at { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .turn p { margin: 2px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Audio Scribe</h1>
+    <span id="workers"></span>
+    <span id="counts" class="sub"></span>
+  </header>
+  <div id="banners"></div>
+
+  <section class="panel">
+    <h2>Transcribe a file</h2>
+    <div id="drop" class="drop" tabindex="0" role="button">
+      Drop audio or video files here, or click to choose.<br>
+      <span class="sub">Files placed in the <code>inbox</code> folder are picked up automatically.</span>
+    </div>
+    <input id="file" type="file" multiple hidden>
+    <div class="options">
+      <label>Language <input id="language" type="text" placeholder="auto-detect" maxlength="8"></label>
+      <label>Number of speakers <input id="speakers" type="number" min="1" max="50" placeholder="auto"></label>
+      <label class="inline"><input id="diarize" type="checkbox" checked> Identify speakers</label>
+      <span id="uploading" class="sub"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Jobs</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>File</th><th>Status</th><th>Length</th><th>Language</th><th>Speakers</th><th>Added</th><th></th></tr></thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty" hidden>No jobs yet.</div>
+  </section>
+</main>
+
+<dialog id="viewer">
+  <div class="dialog-head">
+    <h2 id="viewer-title"></h2>
+    <span id="downloads"></span>
+    <button id="viewer-close">Close</button>
+  </div>
+  <div class="dialog-body">
+    <div id="viewer-speakers" class="speakers"></div>
+    <div id="viewer-text"></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+const clock = (s) => {
+  s = Math.max(0, Math.floor(s || 0));
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`;
+};
+const api = async (path, options) => {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { detail = (await response.json()).detail || detail; } catch (_) {}
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return response.status === 204 ? null : response;
+};
+let formats = ["md"];
+
+// ------------------------------------------------------------------ status
+async function refreshHealth() {
+  const banners = [];
+  let health;
+  try {
+    health = await (await fetch("/api/health")).json();
+  } catch (_) {
+    health = { status: "unavailable", workers: [], jobs: {} };
+  }
+  if (health.status !== "ok") banners.push("The service cannot reach its database.");
+  formats = health.formats || formats;
+  const alive = health.workers.filter((w) => w.alive);
+  const workers = $("workers");
+  workers.replaceChildren();
+  if (health.status === "ok" && !alive.length) {
+    banners.push("No worker is running, so queued files will wait. Check `docker compose logs worker`.");
+  }
+  for (const w of alive) {
+    const state = w.status === "ready" ? "ok" : w.status === "error" ? "bad" : "warn";
+    const text = w.status === "ready" ? `${w.device} · ${w.speech_model}` : `worker ${w.status}`;
+    workers.append(el("span", { className: `chip ${state}`, title: w.id }, el("span", { className: "dot" }), text), " ");
+    if (w.status === "error") banners.push(`Worker cannot start: ${w.message}`);
+  }
+  const j = health.jobs || {};
+  $("counts").textContent = health.status === "ok"
+    ? `${j.queued || 0} queued · ${j.processing || 0} running · ${j.done || 0} done · ${j.failed || 0} failed` : "";
+  $("banners").replaceChildren(...banners.map((text) => el("div", { className: "banner" }, text)));
+}
+
+// -------------------------------------------------------------------- jobs
+function statusCell(job) {
+  const cell = el("td");
+  cell.append(el("span", { className: `status-${job.status}` }, job.status));
+  if (job.status === "processing") {
+    cell.append(el("br"), el("progress", { max: 1, value: job.progress }),
+                el("div", { className: "sub" }, `${job.stage || ""} ${Math.round(job.progress * 100)}%`));
+  } else if (job.status === "queued" && job.attempts > 0) {
+    cell.append(el("div", { className: "sub" }, `retry ${job.attempts + 1} of ${job.max_attempts} pending`));
+  }
+  if (job.error && job.status !== "done") cell.append(el("div", { className: "sub error" }, job.error));
+  return cell;
+}
+
+function actionsCell(job) {
+  const cell = el("td", { className: "actions" });
+  const act = (label, run, primary) => {
+    const button = el("button", { className: primary ? "primary" : "" }, label);
+    button.onclick = async () => {
+      try { await run(); } catch (error) { alert(error.message); }
+      refresh();
+    };
+    cell.append(button, " ");
+  };
+  const url = `/api/jobs/${job.id}`;
+  if (job.status === "done") act("View", () => openViewer(job), true);
+  if (["queued", "processing"].includes(job.status)) act("Cancel", () => api(`${url}/cancel`, { method: "POST" }));
+  if (["failed", "cancelled", "done"].includes(job.status)) act(job.status === "done" ? "Re-run" : "Retry", () => api(`${url}/retry`, { method: "POST" }));
+  act("Delete", async () => {
+    if (confirm(`Remove "${job.filename}" from the list? Transcript files on disk are kept.`)) await api(url, { method: "DELETE" });
+  });
+  return cell;
+}
+
+async function refreshJobs() {
+  let jobs;
+  try { jobs = (await (await api("/api/jobs?limit=200")).json()).jobs; } catch (_) { return; }
+  $("empty").hidden = jobs.length > 0;
+  $("jobs").replaceChildren(...jobs.map((job) => el("tr", {},
+    el("td", { className: "name" }, job.filename,
+       el("div", { className: "sub" }, [job.source === "upload" ? "uploaded" : `inbox/${job.folder ? job.folder + "/" : ""}`,
+                                         `${(job.size_bytes / 1048576).toFixed(1)} MB`].join(" · "))),
+    statusCell(job),
+    el("td", {}, job.duration_s ? clock(job.duration_s) : ""),
+    el("td", {}, job.language || ""),
+    el("td", {}, job.status === "done" ? String(job.num_speakers || "–") : ""),
+    el("td", { className: "sub" }, new Date(job.created_at).toLocaleString()),
+    actionsCell(job),
+  )));
+}
+
+const refresh = () => Promise.all([refreshHealth(), refreshJobs()]);
+
+// ------------------------------------------------------------------ upload
+async function upload(files) {
+  const note = $("uploading");
+  let n = 0;
+  for (const file of files) {
+    note.textContent = `Uploading ${++n} of ${files.length}: ${file.name}`;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("language", $("language").value);
+    form.append("num_speakers", $("speakers").value);
+    form.append("diarize", $("diarize").checked ? "" : "false");
+    try { await api("/api/jobs", { method: "POST", body: form }); }
+    catch (error) { alert(`${file.name}: ${error.message}`); }
+  }
+  note.textContent = "";
+  refresh();
+}
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") $("file").click(); };
+$("file").onchange = (event) => { upload([...event.target.files]); event.target.value = ""; };
+drop.ondragover = (event) => { event.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (event) => { event.preventDefault(); drop.classList.remove("over"); upload([...event.dataTransfer.files]); };
+
+// ------------------------------------------------------------------ viewer
+const COLORS = ["#2f6fed", "#c2410c", "#17804d", "#9333ea", "#b45309", "#0e7490", "#be185d", "#4d7c0f"];
+
+async function openViewer(job) {
+  const url = `/api/jobs/${job.id}`;
+  // Fetch with the original labels so that names can be edited.
+  const fresh = await (await api(url)).json();
+  const transcript = await (await api(`${url}/transcript?format=json`)).json();
+  const byName = Object.fromEntries(Object.entries(fresh.speaker_names).map(([label, name]) => [name, label]));
+  const labels = transcript.speakers.map((shown) => byName[shown] || shown);
+  const color = (shown) => COLORS[transcript.speakers.indexOf(shown) % COLORS.length];
+
+  $("viewer-title").textContent = fresh.filename;
+  $("downloads").replaceChildren(...formats.flatMap((f) =>
+    [el("a", { className: "button", href: `${url}/transcript?format=${f}&download=1` }, `.${f}`), " "]));
+
+  const inputs = labels.map((label, i) => {
+    const input = el("input", { type: "text", value: fresh.speaker_names[label] || "", placeholder: label });
+    return [label, input, el("label", { style: `color:${COLORS[i % COLORS.length]}` }, label, input)];
+  });
+  const speakers = $("viewer-speakers");
+  speakers.replaceChildren(...inputs.map((entry) => entry[2]));
+  if (inputs.length) {
+    const save = el("button", {}, "Save names");
+    save.onclick = async () => {
+      const names = Object.fromEntries(inputs.map(([label, input]) => [label, input.value]));
+      try {
+        await api(`${url}/speakers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ names }) });
+        openViewer(job);
+      } catch (error) { alert(error.message); }
+    };
+    speakers.append(save);
+  }
+
+  $("viewer-text").replaceChildren(...(transcript.segments.length
+    ? transcript.segments.map((s) => el("div", { className: "turn" },
+        s.speaker ? el("span", { className: "who", style: `color:${color(s.speaker)}` }, s.speaker) : "",
+        el("span", { className: "at" }, clock(s.start)),
+        el("p", {}, s.text)))
+    : [el("div", { className: "empty" }, "No speech detected.")]));
+  if (!$("viewer").open) $("viewer").showModal();
+}
+$("viewer-close").onclick = () => $("viewer").close();
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
