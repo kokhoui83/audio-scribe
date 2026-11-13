@@ -1,0 +1,6 @@
+# For a worker that runs outside Docker (scripts/host-worker.sh). PyTorch
+# comes in through pyannote.audio; on a Mac the standard build supports Metal.
+psycopg[binary,pool]==3.3.9
+pyannote.audio==4.0.7
+huggingface_hub
+numpy

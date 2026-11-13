@@ -1,0 +1,11 @@
+# The worker runs directly on the host instead of in Docker, which is the
+# only way to use the GPU of a Mac (Metal). Everything else stays in Docker.
+#   docker compose -f compose.yaml -f compose.host-worker.yaml up -d
+#   ./scripts/host-worker.sh
+# See docs/how-to/metal.md.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"  # so the host worker can reach the queue
+  worker:
+    profiles: [docker-worker]  # not started unless this profile is asked for

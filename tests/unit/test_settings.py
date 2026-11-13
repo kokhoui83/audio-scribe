@@ -59,6 +59,12 @@ def test_values_are_parsed():
         {"MAX_ATTEMPTS": "0"},
         {"DIARIZE": "perhaps"},
         {"LEASE_SECONDS": "5", "HEARTBEAT_SECONDS": "10"},
+        {"SPEECH_ENGINE": "llm"},
+        {"DEVICE": "vulkan", "SPEECH_ENGINE": "faster-whisper"},
+        {"DEVICE": "metal", "SPEECH_ENGINE": "faster-whisper"},
+        {"DEVICE": "cuda", "SPEECH_ENGINE": "whisper-cpp"},
+        {"DIARIZATION_DEVICE": "vulkan"},
+        {"GPU_INDEX": "-1"},
     ],
 )
 def test_mistakes_are_reported_with_the_variable_name(env):
@@ -73,3 +79,37 @@ def test_compute_type_and_batch_size_follow_the_device():
     assert (gpu.compute_type, gpu.batch_size) == ("float16", 8)
     custom = Settings.from_env({"WHISPER_COMPUTE_TYPE": "float32", "WHISPER_BATCH_SIZE": "2"})
     assert (custom.compute_type, custom.batch_size) == ("float32", 2)
+
+
+@pytest.mark.parametrize(
+    "device, engine, speaker_device",
+    [
+        ("cpu", "faster-whisper", "cpu"),
+        ("cuda", "faster-whisper", "cuda"),
+        # PyTorch, which identifies the speakers, has no Vulkan backend.
+        ("vulkan", "whisper-cpp", "cpu"),
+        ("metal", "whisper-cpp", "mps"),
+    ],
+)
+def test_the_speech_engine_and_the_speaker_device_follow_the_device(device, engine, speaker_device):
+    s = Settings.from_env({"DEVICE": device})
+    assert (s.speech_engine, s.diarization_device) == (engine, speaker_device)
+
+
+def test_whisper_cpp_can_also_be_chosen_on_cpu():
+    s = Settings.from_env({"SPEECH_ENGINE": "Whisper-CPP"})
+    assert (s.device, s.speech_engine, s.diarization_device) == ("cpu", "whisper-cpp", "cpu")
+    assert (s.whisper_cpp_binary, s.gpu_index) == ("whisper-cli", 0)
+
+
+def test_the_speaker_device_and_whisper_cpp_details_can_be_overridden():
+    s = Settings.from_env(
+        {
+            "DEVICE": "metal",
+            "DIARIZATION_DEVICE": "CPU",
+            "WHISPER_CPP_BIN": "/opt/w/whisper-cli",
+            "GPU_INDEX": "1",
+        }
+    )
+    assert (s.speech_engine, s.diarization_device) == ("whisper-cpp", "cpu")
+    assert (s.whisper_cpp_binary, s.gpu_index) == ("/opt/w/whisper-cli", 1)

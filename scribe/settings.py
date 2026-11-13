@@ -11,7 +11,19 @@ from scribe.domain.rendering import FORMATS
 DEFAULT_EXTENSIONS = (
     "mp3,wav,m4a,m4b,aac,flac,ogg,oga,opus,wma,aiff,aif,amr,3gp,ac3,mka,weba,webm,mp4,mov,mkv,avi,m4v,wmv"
 )
-DEVICES = ("cpu", "cuda")
+DEVICES = ("cpu", "cuda", "vulkan", "metal")
+# Which Whisper implementation runs on which device. faster-whisper
+# (CTranslate2) knows CPU and CUDA; whisper.cpp adds Vulkan and Metal.
+ENGINES = {"faster-whisper": ("cpu", "cuda"), "whisper-cpp": ("cpu", "vulkan", "metal")}
+DEFAULT_ENGINE = {
+    "cpu": "faster-whisper",
+    "cuda": "faster-whisper",
+    "vulkan": "whisper-cpp",
+    "metal": "whisper-cpp",
+}
+# The PyTorch device that identifies speakers. PyTorch has no Vulkan backend.
+TORCH_DEVICES = ("cpu", "cuda", "mps")
+DEFAULT_TORCH_DEVICE = {"cpu": "cpu", "cuda": "cuda", "vulkan": "cpu", "metal": "mps"}
 GPU_BATCH_SIZE = 8
 
 
@@ -38,6 +50,9 @@ class Settings:
     stable_seconds: float
     # speech models
     device: str
+    speech_engine: str
+    whisper_cpp_binary: str
+    gpu_index: int
     whisper_model: str
     whisper_compute_type: str
     whisper_batch_size: int
@@ -45,6 +60,7 @@ class Settings:
     default_language: str | None
     diarize: bool
     diarization_model: str
+    diarization_device: str
     hf_token: str | None
 
     @property
@@ -62,6 +78,18 @@ class Settings:
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
         read = _Reader(env)
+        device = read.choice("DEVICE", "cpu", DEVICES)
+        engine = read.choice("SPEECH_ENGINE", "auto", ("auto", *ENGINES))
+        if engine == "auto":
+            engine = DEFAULT_ENGINE[device]
+        if device not in ENGINES[engine]:
+            raise ConfigError(
+                f"SPEECH_ENGINE: {engine} does not run on DEVICE={device}; "
+                f"it supports {', '.join(ENGINES[engine])}"
+            )
+        speaker_device = read.choice("DIARIZATION_DEVICE", "auto", ("auto", *TORCH_DEVICES))
+        if speaker_device == "auto":
+            speaker_device = DEFAULT_TORCH_DEVICE[device]
         settings = cls(
             database_url=read.text("DATABASE_URL", "postgresql://scribe:scribe@db:5432/scribe"),
             data_dir=Path(read.text("DATA_DIR", "/data")),
@@ -78,7 +106,10 @@ class Settings:
             poll_seconds=read.number("POLL_SECONDS", 2, minimum=0.1),
             scan_seconds=read.number("SCAN_SECONDS", 2, minimum=0.1),
             stable_seconds=read.number("STABLE_SECONDS", 5, minimum=0),
-            device=read.choice("DEVICE", "cpu", DEVICES),
+            device=device,
+            speech_engine=engine,
+            whisper_cpp_binary=read.text("WHISPER_CPP_BIN", "whisper-cli"),
+            gpu_index=read.integer("GPU_INDEX", 0, minimum=0),
             whisper_model=read.text("WHISPER_MODEL", "large-v3-turbo"),
             whisper_compute_type=read.text("WHISPER_COMPUTE_TYPE", "auto").lower(),
             whisper_batch_size=read.integer("WHISPER_BATCH_SIZE", 0, minimum=0),
@@ -86,6 +117,7 @@ class Settings:
             default_language=read.text("DEFAULT_LANGUAGE", "").lower() or None,
             diarize=read.boolean("DIARIZE", True),
             diarization_model=read.text("DIARIZATION_MODEL", "pyannote/speaker-diarization-community-1"),
+            diarization_device=speaker_device,
             hf_token=read.text("HF_TOKEN", "") or None,
         )
         if settings.lease_seconds <= 2 * settings.heartbeat_seconds:

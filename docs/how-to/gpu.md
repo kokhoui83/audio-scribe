@@ -1,5 +1,7 @@
 # Run on an NVIDIA GPU
 
+For AMD and Intel GPUs see [Vulkan](vulkan.md); for a Mac see [Metal](metal.md).
+
 ## Prerequisites
 
 - An NVIDIA GPU with a current driver on the host
