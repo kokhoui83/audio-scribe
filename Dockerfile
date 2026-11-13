@@ -36,6 +36,29 @@ ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/u
 COPY scribe scribe
 CMD ["python", "-m", "scribe.entrypoints.worker"]
 
+# ---- whisper.cpp built with Vulkan (only needed by worker-vulkan) -----------
+# Same Debian release as the worker, so the binary finds the libraries it was
+# linked against.
+FROM python:3.12-slim AS whispercpp
+ARG WHISPER_CPP_VERSION=v1.9.5
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git cmake make g++ libvulkan-dev glslc spirv-headers \
+    && rm -rf /var/lib/apt/lists/*
+# GGML_NATIVE=OFF: do not tune for the CPU of the machine that builds the image.
+RUN git clone --depth 1 --branch ${WHISPER_CPP_VERSION} https://github.com/ggml-org/whisper.cpp /src \
+    && cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
+    && cmake --build /build --target whisper-cli -j "$(nproc)"
+
+# ---- worker for GPUs reached through Vulkan (AMD, Intel, ...) ---------------
+# Whisper runs in whisper.cpp on the GPU; speaker identification stays on the
+# CPU, because PyTorch has no Vulkan backend.
+FROM worker AS worker-vulkan
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=whispercpp /build/bin/whisper-cli /usr/local/bin/whisper-cli
+
 # ---- tests (no speech models: they sit behind ports and are faked) ---------
 FROM base AS test
 COPY requirements/dev.txt requirements/dev.txt

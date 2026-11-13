@@ -1,0 +1,13 @@
+# GPUs reached through Vulkan (AMD, Intel, ...) on a Linux Docker host.
+#   docker compose -f compose.yaml -f compose.vulkan.yaml up -d --build
+# Whisper runs on the GPU in whisper.cpp; speaker identification stays on
+# the CPU. See docs/how-to/vulkan.md.
+services:
+  worker:
+    build:
+      target: worker-vulkan
+    image: audio-scribe-worker-vulkan
+    environment:
+      DEVICE: vulkan
+    devices:
+      - /dev/dri:/dev/dri

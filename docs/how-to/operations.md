@@ -25,6 +25,9 @@ machine has no internet for the first download.
 restarts in a loop with exit code 137 it is running out of memory: use a
 smaller `WHISPER_MODEL` or give Docker more memory.
 
+**"whisper.cpp found no GPU it can use"** — see the troubleshooting section
+of the [Vulkan](vulkan.md) or [Metal](metal.md) guide.
+
 **A file sits in the inbox** — it must have a known audio extension, must not
 be hidden or a partial download (`.part`, `.crdownload`), and must be
 unchanged for `STABLE_SECONDS`. See `docker compose logs watcher`.

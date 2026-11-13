@@ -8,10 +8,14 @@ mistyped value stops the service with a message naming the variable.
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `DEVICE` | `cpu` | `cpu`, `cuda`, `vulkan` or `metal`. Set by the compose override files and the host worker script; see the GPU guides. |
+| `SPEECH_ENGINE` | `auto` | `auto` = `faster-whisper` on `cpu`/`cuda`, `whisper-cpp` on `vulkan`/`metal`. `whisper-cpp` can also be forced on `cpu` where the program is installed (Vulkan image, host worker). |
+| `GPU_INDEX` | `0` | Which GPU whisper.cpp uses, if there are several. |
+| `DIARIZATION_DEVICE` | `auto` | PyTorch device for speaker identification: `cpu`, `cuda` or `mps`. `auto` follows `DEVICE` (`cpu` under Vulkan). |
 | `WHISPER_MODEL` | `large-v3-turbo` | `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`, or any faster-whisper model name. Larger is more accurate and slower. |
 | `DEFAULT_LANGUAGE` | *(detect)* | Language code such as `en`, `de`, `zh`. |
-| `WHISPER_COMPUTE_TYPE` | `auto` | `auto` = `int8` on CPU, `float16` on GPU. |
-| `WHISPER_BATCH_SIZE` | `0` | `0` = 1 on CPU, 8 on GPU. Higher is faster and uses more memory. |
+| `WHISPER_COMPUTE_TYPE` | `auto` | faster-whisper only. `auto` = `int8` on CPU, `float16` on GPU. |
+| `WHISPER_BATCH_SIZE` | `0` | faster-whisper only. `0` = 1 on CPU, 8 on GPU. Higher is faster and uses more memory. |
 | `CPU_THREADS` | `0` | Threads for inference; `0` = all cores. |
 
 ## Speaker identification

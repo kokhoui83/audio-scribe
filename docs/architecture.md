@@ -27,7 +27,9 @@ flowchart LR
 
 `api` and `watcher` share a small image without any ML dependency. Only the
 worker image carries PyTorch and the models; it is built for CPU or for CUDA
-through a build argument.
+through a build argument. A third variant, `audio-scribe-worker-vulkan`, adds
+whisper.cpp built with Vulkan. For Apple Metal the worker runs on the host
+(`scripts/host-worker.sh`) against the same database and data folder.
 
 All services mount the same `data/` folder. Models are cached in the `models`
 volume, the database in the `db` volume.
@@ -50,7 +52,7 @@ flowchart LR
 | --- | --- | --- |
 | `scribe/domain` | `Job` and its state machine, `Transcript` and how it is built from words and speaker turns, output rendering. Pure Python. | standard library |
 | `scribe/application` | Use cases (`InboxWatcher`, `JobProcessor`, `Worker`, `Housekeeper`, `JobService`) and the **ports** they need (`ports.py`). | domain |
-| `scribe/adapters` | One implementation per port: PostgreSQL, local files, ffmpeg, faster-whisper, pyannote, plus an in-memory queue. | application, domain, third-party libraries |
+| `scribe/adapters` | One implementation per port: PostgreSQL, local files, ffmpeg, faster-whisper, whisper.cpp, pyannote, plus an in-memory queue. | application, domain, third-party libraries |
 | `scribe/bootstrap.py` | Composition root: decides which adapter fills which port. | everything |
 | `scribe/entrypoints` | The three processes. Thin: parse input, call a use case, format output. | bootstrap, application, domain |
 
@@ -120,6 +122,14 @@ half-copied files.
 
 **One data mount.** Inbox, staging, output and archive are on one file system,
 so taking a file from the inbox is one atomic rename.
+
+**Two Whisper engines behind one port.** faster-whisper is the default: it
+is the fastest on CPU and CUDA and has the most precise word timings, but it
+supports nothing else. whisper.cpp covers Vulkan and Metal. `DEVICE` selects
+the engine; both implement `SpeechRecognizer`, so nothing above the adapters
+knows which one runs. whisper.cpp is run as a program per recording, like
+ffmpeg, rather than linked in: a GPU driver crash then costs one attempt of
+one job instead of the worker.
 
 **pyannote for diarization.** Best open accuracy; the price is a one-time
 Hugging Face token. The `Diarizer` port keeps this replaceable.

@@ -122,7 +122,10 @@ Other rules:
    samples. This is why every format ffmpeg knows is supported.
 2. **Recognise** — faster-whisper with voice-activity detection and word
    timestamps. The language is detected from the audio unless given. On a GPU
-   the batched pipeline is used.
+   the batched pipeline is used. With `DEVICE=vulkan` or `metal` the
+   whisper.cpp program does this step instead: the samples are handed over
+   as a WAV file, progress is read from its log, and its sub-word tokens are
+   joined into words. Its marker for silence (`[BLANK_AUDIO]`) is dropped.
 3. **Diarize** — pyannote returns speaker turns (`start`, `end`, `label`). The
    *exclusive* output (no overlapping turns) is used when available. An
    expected number of speakers can be passed as a hint.
@@ -142,7 +145,7 @@ Other rules:
 | Acceptance (Gherkin) | `tests/features`, steps in `tests/acceptance` | Each requirement, through the real use cases and a real data folder | fake clock, fake speech models, in-memory queue |
 | Unit | `tests/unit` | Domain rules, settings, adapter translation logic, the dependency rule | nothing |
 | Contract | `tests/contract` | In-memory and PostgreSQL repositories behave identically | PostgreSQL for one of the two runs |
-| Integration | `tests/integration` | HTTP API, file-store safety, ffmpeg decoding of real files | ffmpeg |
+| Integration | `tests/integration` | HTTP API, file-store safety, ffmpeg decoding of real files, the command-line contract with whisper.cpp (against a stand-in program) | ffmpeg |
 
 The speech models are never loaded in tests; they sit behind ports and are
 replaced by fakes that turn a small text "recording" into timed words and
@@ -154,6 +157,10 @@ contract tests as the real one.
 - A whole recording is decoded into memory (about 230 MB per hour of audio).
 - Speakers are numbered per file; there is no recognition across files.
 - Overlapping speech is attributed to one speaker.
+- With whisper.cpp (Vulkan, Metal): word timings are less precise than with
+  faster-whisper, there is no voice-activity detection, and the model is
+  loaded again for every recording (a few seconds).
+- Speaker identification is not accelerated under Vulkan.
 - No authentication; the port is bound to localhost by default.
 - Schema changes are applied with `CREATE … IF NOT EXISTS`; a schema change to
   an existing column would need a migration tool.

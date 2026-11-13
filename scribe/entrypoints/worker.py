@@ -40,10 +40,11 @@ def main() -> None:
 
     threading.Thread(target=keep_alive, name="keep-alive", daemon=True).start()
     log.info(
-        "worker starting: device=%s whisper=%s diarize=%s",
+        "worker starting: device=%s engine=%s whisper=%s diarize=%s",
         settings.device,
+        settings.speech_engine,
         settings.whisper_model,
-        settings.diarize,
+        f"on {settings.diarization_device}" if settings.diarize else "off",
     )
     while not stop.is_set():
         try:

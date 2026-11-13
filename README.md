@@ -3,7 +3,7 @@
 Drop an audio file in a folder, get back a transcript that says who spoke
 when. Runs entirely on your own machine with Docker Compose.
 
-- **Speech to text** with Whisper (via faster-whisper), **speaker
+- **Speech to text** with Whisper (faster-whisper or whisper.cpp), **speaker
   identification** with pyannote. Both are dedicated local speech models; no
   large language model and no cloud service is involved.
 - **Any common format**: mp3, wav, m4a, flac, ogg, opus, aac, wma, … and the
@@ -13,7 +13,8 @@ when. Runs entirely on your own machine with Docker Compose.
   crashes, nothing lost on restart.
 - **Output** as Markdown (default), plain text, JSON with word timings, SRT
   and WebVTT.
-- **CPU by default, NVIDIA GPU** with one extra compose file.
+- **CPU by default.** NVIDIA GPUs (CUDA) and AMD/Intel GPUs (Vulkan) with one
+  extra compose file; Apple GPUs (Metal) with the worker running on the Mac.
 
 ## Quick start
 
@@ -38,6 +39,9 @@ With an NVIDIA GPU:
 docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
 ```
 
+Other GPUs: [AMD and Intel through Vulkan](docs/how-to/vulkan.md),
+[Apple through Metal](docs/how-to/metal.md).
+
 ## Documentation
 
 | | |
@@ -48,6 +52,8 @@ docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
 | [Getting started](docs/how-to/getting-started.md) | First run, step by step |
 | [Configuration](docs/how-to/configuration.md) | Every setting |
 | [GPU](docs/how-to/gpu.md) | Running on an NVIDIA GPU |
+| [Vulkan](docs/how-to/vulkan.md) | Running on an AMD or Intel GPU |
+| [Metal](docs/how-to/metal.md) | Running on a Mac GPU |
 | [HTTP API](docs/how-to/api.md) | Endpoints with examples |
 | [Operations](docs/how-to/operations.md) | Monitoring, scaling, backup, troubleshooting |
 | [Development](docs/how-to/development.md) | Running tests, the TDD workflow, extending the system |

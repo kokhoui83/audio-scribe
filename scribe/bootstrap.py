@@ -82,21 +82,31 @@ def housekeeper() -> Housekeeper:
 
 def load_engines() -> Engines:
     """Load the speech models. Imported lazily: only the worker image has them."""
-    from scribe.adapters import pyannote, whisper
+    from scribe.adapters import pyannote, whisper, whispercpp
     from scribe.adapters.ffmpeg import FfmpegDecoder
 
     s = settings()
-    recognizer = whisper.load(
-        model=s.whisper_model,
-        device=s.device,
-        compute_type=s.compute_type,
-        batch_size=s.batch_size,
-        cpu_threads=s.cpu_threads,
-        cache_dir=s.models_dir / "whisper",
-    )
+    if s.speech_engine == "whisper-cpp":
+        recognizer = whispercpp.load(
+            binary=s.whisper_cpp_binary,
+            model=s.whisper_model,
+            device=s.device,
+            gpu_index=s.gpu_index,
+            cpu_threads=s.cpu_threads,
+            cache_dir=s.models_dir / "whisper-cpp",
+        )
+    else:
+        recognizer = whisper.load(
+            model=s.whisper_model,
+            device=s.device,
+            compute_type=s.compute_type,
+            batch_size=s.batch_size,
+            cpu_threads=s.cpu_threads,
+            cache_dir=s.models_dir / "whisper",
+        )
     diarizer = None
     if s.diarize:
-        diarizer = pyannote.load(model=s.diarization_model, token=s.hf_token, device=s.device)
+        diarizer = pyannote.load(model=s.diarization_model, token=s.hf_token, device=s.diarization_device)
     return Engines(
         decoder=FfmpegDecoder(),
         recognizer=recognizer,

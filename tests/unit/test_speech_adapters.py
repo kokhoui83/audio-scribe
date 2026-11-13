@@ -9,6 +9,8 @@ import pytest
 
 from scribe.adapters.pyannote import PyannoteDiarizer
 from scribe.adapters.whisper import WhisperRecognizer
+from scribe.adapters.whispercpp import words_from_output
+from scribe.application.ports import Recognition
 from scribe.domain.job import JobOptions
 from scribe.domain.transcript import SpeakerTurn, Word
 
@@ -169,3 +171,83 @@ class TestPyannoteDiarizer:
         self.stub(Annotation(), steps).diarize(Audio(), JobOptions(), seen.append)
         assert seen == sorted(seen) and seen[0] > 0 and seen[-1] <= 1.0
         assert len(set(seen)) >= 4
+
+
+def token(text, start_ms, end_ms, p=0.9):
+    return {"text": text, "offsets": {"from": start_ms, "to": end_ms}, "p": p}
+
+
+def segment(*tokens):
+    return {"offsets": {"from": 0, "to": 0}, "text": "", "tokens": list(tokens)}
+
+
+class TestWhisperCppOutput:
+    """whisper.cpp reports sub-word tokens; we need words."""
+
+    def parse(self, *segments, language="en"):
+        return words_from_output({"result": {"language": language}, "transcription": list(segments)})
+
+    def test_tokens_are_joined_into_words_with_their_timing(self):
+        result = self.parse(
+            segment(
+                token("[_BEG_]", 0, 0),
+                token(" And", 320, 330),
+                token(" so", 330, 530),
+                token(",", 680, 740),
+                token(" Amer", 950, 1200, p=0.5),
+                token("icans", 1200, 1590, p=0.7),
+                token(".", 1600, 1650, p=0.9),
+                token("[_TT_525]", 1650, 1650),
+            )
+        )
+        assert result.language == "en"
+        assert list(result.words) == [
+            Word(0.32, 0.33, " And", probability=0.9),
+            Word(0.33, 0.74, " so,", probability=0.9),
+            Word(0.95, 1.65, " Americans.", probability=pytest.approx(0.7)),
+        ]
+
+    def test_each_word_remembers_the_segment_it_came_from(self):
+        result = self.parse(
+            segment(token(" One", 0, 100), token(" two.", 100, 200)),
+            segment(token("[_BEG_]", 0, 0)),
+            segment(token(" Three.", 900, 1000)),
+        )
+        assert [(w.text, w.segment) for w in result.words] == [(" One", 0), (" two.", 0), (" Three.", 2)]
+
+    def test_a_segment_never_continues_the_last_word_of_the_one_before(self):
+        result = self.parse(segment(token(" One", 0, 100)), segment(token("Two", 500, 600)))
+        assert [w.text for w in result.words] == [" One", "Two"]
+
+    def test_languages_written_without_spaces_get_one_word_per_character_group(self):
+        result = self.parse(segment(token("你好", 0, 400), token("世界", 400, 900)), language="zh")
+        assert [(w.start, w.end, w.text) for w in result.words] == [(0.0, 0.4, "你好"), (0.4, 0.9, "世界")]
+
+    def test_a_character_split_across_tokens_is_put_back_together(self):
+        # whisper.cpp writes the raw bytes of each token, so a multi-byte
+        # character can arrive in two halves.
+        first, second = (
+            part.decode("utf-8", "surrogateescape") for part in ("好".encode()[:2], "好".encode()[2:])
+        )
+        result = self.parse(
+            segment(token("你", 0, 100), token(first, 100, 200), token(second, 200, 300)), language="zh"
+        )
+        assert [(w.start, w.end, w.text) for w in result.words] == [(0.0, 0.1, "你"), (0.1, 0.3, "好")]
+
+    def test_no_speech_gives_no_words(self):
+        result = self.parse(segment(token("[_BEG_]", 0, 0), token("[_TT_50]", 0, 0)), language="en")
+        assert list(result.words) == []
+        assert words_from_output({"result": {}, "transcription": []}) == Recognition(None, [])
+
+    def test_the_marker_for_silence_is_not_speech(self):
+        blank = [
+            token(" [", 0, 500),
+            token("BLANK", 500, 900),
+            token("_", 900, 950),
+            token("AUDIO", 950, 1400),
+        ]
+        result = self.parse(
+            segment(token("[_BEG_]", 0, 0), *blank, token("]", 1400, 1500)),
+            segment(token(" Hello.", 2000, 2400)),
+        )
+        assert [(w.text, w.segment) for w in result.words] == [(" Hello.", 1)]

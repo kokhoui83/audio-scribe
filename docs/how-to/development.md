@@ -61,3 +61,10 @@ docker compose logs -f worker
 ```
 
 `tiny` downloads in seconds and is enough to see the pipeline work end to end.
+
+To exercise whisper.cpp without a GPU, use the Vulkan image on the CPU:
+
+```sh
+WHISPER_MODEL=tiny SPEECH_ENGINE=whisper-cpp docker compose \
+  -f compose.yaml -f compose.vulkan.yaml run --rm -e DEVICE=cpu worker
+```
