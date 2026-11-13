@@ -10,6 +10,9 @@ How the mechanisms described in the [architecture](architecture.md) work.
   change is a method (`start`, `renew`, `complete`, `fail`, `release`,
   `expire_lease`, `cancel`, `retry`) that either applies the change or raises
   `InvalidTransition` / `NotOwner`.
+- **`Draft`** (`domain/draft.py`) — what has been transcribed of a recording
+  so far: the words, the second up to which they are settled, the language.
+  `Draft.extended` decides which newly recognised words are kept.
 - **`Transcript`** (`domain/transcript.py`) — language, duration, speakers and
   a list of `Segment`s (a paragraph by one speaker, made of timed `Word`s).
 - **`render`** (`domain/rendering.py`) — a transcript as md, txt, json, srt or
@@ -138,6 +141,92 @@ Other rules:
 6. **Render** — one document per configured format; subtitle cues are cut at
    84 characters / 7 seconds and never span two speakers.
 
+## Live recording
+
+```mermaid
+sequenceDiagram
+    participant P as web page
+    participant A as api
+    participant F as .work/<id>/file
+    participant Q as jobs table
+    participant W as worker
+    P->>A: POST /api/recordings
+    A->>Q: job (queued, audio_complete = false)
+    loop every 5 s while recording
+        P->>A: piece of audio + byte offset
+        A->>F: write at offset
+    end
+    loop every RECORDING_PASS_SECONDS
+        W->>Q: claim
+        W->>F: decode from draft.position
+        W->>W: recognise, keep settled words
+        W->>Q: save draft, pause (back to queued)
+    end
+    P->>A: POST …/finish
+    A->>Q: audio_complete = true, runnable now
+    W->>Q: claim
+    W->>W: recognise the rest, identify speakers on all audio
+    W->>Q: done, as for any file
+```
+
+### Storing the audio
+
+The browser's `MediaRecorder` produces one continuous file (WebM/Opus in
+Chrome and Firefox) in pieces. The server appends them to one file in the
+job's staging folder. Each piece comes with the byte offset it belongs at,
+and is written *at* that offset under the job's row lock:
+
+- sent twice (a retry after a lost answer): the same bytes land on the same
+  place, nothing changes;
+- sent too early (a piece before it is missing): refused with `409` and the
+  offset the server expects.
+
+A file in this state has no index and may end in the middle of a packet.
+ffmpeg decodes it up to the last complete packet, which an integration test
+checks with files cut off at arbitrary bytes.
+
+### A pass
+
+1. Load the draft; decode the file from `draft.position` to its current end
+   (`AudioDecoder.decode(path, start)`).
+2. Recognise that audio. After the first pass the language found then is
+   passed in, so it cannot flip between passes.
+3. `Draft.extended` keeps the words up to the last boundary between two
+   recogniser segments (roughly sentences) that lies at least five seconds
+   before the end of the audio, and moves `position` into the pause after
+   them. Everything later is recognised again in the next pass, with more
+   context. Speech that runs for a minute without a segment boundary is cut
+   between two words instead.
+4. Save the draft and `pause` the job: back to `queued`, runnable in
+   `RECORDING_PASS_SECONDS`, attempt not counted.
+
+A pass that finds the file not decodable yet (only part of the header has
+arrived) just pauses. Once the recording has ended, the same condition fails
+the job like any unreadable file.
+
+### The end
+
+`finish` sets `audio_complete` and makes the job runnable at once. The next
+pass is the last: nothing is held back, the whole file is decoded once more
+for speaker identification, and words and turns are merged by the same
+`build_transcript` as for a file. An ordinary file takes this very path with
+an empty draft, so there is one pipeline, not two.
+
+If no audio arrives for `RECORDING_IDLE_SECONDS`, the next pass ends the
+recording itself. The web page keeps the recording in memory until the server
+has confirmed all of it, and offers it as a download if the server refuses a
+piece (job cancelled or deleted) or stays unreachable.
+
+### What a failure leaves behind
+
+| Failure | Result |
+| --- | --- |
+| Worker crashes during a pass | Lease expires, job re-queued; the next pass resumes from the saved draft. Counts as an attempt, so a recording that crashes every pass is failed in the end. |
+| Worker stopped during a pass | Job released; nothing lost but that pass. |
+| No worker, or a long queue | Audio keeps being stored. The recording is transcribed later, in fewer and larger passes. |
+| Browser closed, connection lost | Recording ended after the idle time and transcribed. |
+| Job cancelled or deleted while recording | Further pieces are refused; the page offers its copy as a download. |
+
 ## Testing strategy
 
 | Level | Where | What it proves | Needs |
@@ -155,6 +244,12 @@ contract tests as the real one.
 ## Known limitations
 
 - A whole recording is decoded into memory (about 230 MB per hour of audio).
+- Live recording: every pass decodes the file from the beginning to reach
+  its start position (cheap next to recognition, but it grows with the
+  length of the recording); the text can differ slightly from transcribing
+  the finished file in one go, because the recogniser sees less context per
+  pass; speaker identification is not started early; only WebM/Opus
+  recordings are covered by tests.
 - Speakers are numbered per file; there is no recognition across files.
 - Overlapping speech is attributed to one speaker.
 - With whisper.cpp (Vulkan, Metal): word timings are less precise than with

@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scribe.domain.job import InvalidTransition, Job, JobStatus, NotOwner, RetryPolicy
+from scribe.domain.draft import Draft
+from scribe.domain.job import RECORDING, InvalidTransition, Job, JobStatus, NotOwner, RetryPolicy
+from scribe.domain.transcript import Word
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 POLICY = RetryPolicy(max_attempts=3, backoff_seconds=30)
@@ -190,3 +192,128 @@ class TestOperatorActions:
         job = new_job()
         job.rename_speakers({"Speaker 1": "  Alice ", "Speaker 2": "  "})
         assert job.speaker_names == {"Speaker 1": "Alice"}
+
+
+def new_recording(**overrides) -> Job:
+    return new_job(filename="standup.webm", source=RECORDING, size_bytes=0, audio_complete=False, **overrides)
+
+
+SOME_TEXT = Draft(position=4.0, language="en", words=(Word(0.0, 1.0, " Hello."),))
+
+
+class TestRecording:
+    IDLE = timedelta(seconds=120)
+
+    def test_an_ordinary_job_has_all_its_audio_from_the_start(self):
+        job = new_job()
+        assert job.audio_complete and not job.is_recording
+
+    def test_a_recording_is_queued_at_once_although_its_audio_is_still_arriving(self):
+        job = new_recording()
+        assert job.is_recording and not job.audio_complete
+        assert job.is_runnable(T0) and job.audio_at == T0
+
+    def test_arriving_audio_is_noted(self):
+        job = new_recording()
+        later = T0 + timedelta(seconds=5)
+        job.receive_audio(later, size_bytes=4096)
+        assert (job.size_bytes, job.audio_at) == (4096, later)
+
+    def test_audio_is_also_accepted_while_a_worker_holds_the_job(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.receive_audio(T0, size_bytes=1)
+        assert job.size_bytes == 1
+
+    @pytest.mark.parametrize("close", [lambda j: j.cancel(T0), lambda j: j.finish_recording(T0)])
+    def test_a_closed_recording_accepts_no_more_audio(self, close):
+        job = new_recording()
+        close(job)
+        with pytest.raises(InvalidTransition):
+            job.receive_audio(T0, size_bytes=1)
+
+    def test_an_ordinary_job_accepts_no_audio(self):
+        with pytest.raises(InvalidTransition):
+            new_job().receive_audio(T0, size_bytes=1)
+
+    def test_finishing_makes_a_waiting_recording_runnable_at_once(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.pause("w1", T0, resume_at=T0 + timedelta(seconds=30))
+        job.finish_recording(T0 + timedelta(seconds=1))
+        assert job.audio_complete and job.is_runnable(T0 + timedelta(seconds=1))
+
+    def test_a_recording_can_only_be_finished_once(self):
+        job = new_recording()
+        job.finish_recording(T0)
+        with pytest.raises(InvalidTransition):
+            job.finish_recording(T0)
+
+    def test_a_recording_is_stalled_when_no_audio_arrived_for_too_long(self):
+        job = new_recording()
+        job.receive_audio(T0 + timedelta(seconds=10), size_bytes=1)
+        assert not job.audio_stalled(T0 + timedelta(seconds=130), self.IDLE)
+        assert job.audio_stalled(T0 + timedelta(seconds=131), self.IDLE)
+
+    def test_a_finished_recording_is_never_stalled(self):
+        job = new_recording()
+        job.finish_recording(T0)
+        assert not job.audio_stalled(T0 + timedelta(days=1), self.IDLE)
+
+    def test_a_checkpoint_stores_the_text_so_far_and_the_length_heard(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.checkpoint("w1", SOME_TEXT, duration_s=9.0)
+        assert (job.draft, job.duration_s) == (SOME_TEXT, 9.0)
+
+    def test_only_the_owner_may_checkpoint_or_pause(self):
+        job = new_recording()
+        job.start("w1", T0)
+        with pytest.raises(NotOwner):
+            job.checkpoint("w2", SOME_TEXT, duration_s=9.0)
+        with pytest.raises(NotOwner):
+            job.pause("w2", T0, resume_at=T0)
+
+    def test_pausing_requeues_for_later_without_spending_an_attempt(self):
+        job = new_recording()
+        job.start("w1", T0)
+        resume_at = T0 + timedelta(seconds=30)
+        job.pause("w1", T0, resume_at=resume_at)
+        assert (job.status, job.attempts, job.locked_by) == (JobStatus.QUEUED, 0, None)
+        assert not job.is_runnable(T0) and job.is_runnable(resume_at)
+
+    def test_pausing_a_recording_that_ended_meanwhile_does_not_delay_it(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.finish_recording(T0)
+        job.pause("w1", T0, resume_at=T0 + timedelta(seconds=30))
+        assert job.is_runnable(T0)
+
+    def test_a_crash_between_passes_still_counts_as_an_attempt(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.pause("w1", T0, resume_at=T0)
+        job.start("w1", T0)
+        job.expire_lease(T0 + timedelta(minutes=5))
+        assert job.attempts == 1 and job.status is JobStatus.QUEUED
+
+    def test_completing_a_recording_clears_the_text_so_far(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.finish_recording(T0)
+        job.complete("w1", T0, outputs=[], stored_path="x", duration_s=1, language="en", num_speakers=0)
+        assert job.draft == Draft()
+
+    def test_running_a_recording_again_starts_from_the_beginning_with_what_was_recorded(self):
+        job = new_recording()
+        job.start("w1", T0)
+        job.checkpoint("w1", SOME_TEXT, duration_s=9.0)
+        job.cancel(T0)
+        job.retry(T0)
+        assert job.draft == Draft() and job.audio_complete
+
+    def test_running_an_ordinary_job_again_leaves_its_draft_alone(self):
+        job = started_job()
+        job.cancel(T0)
+        job.retry(T0)
+        assert job.draft is None

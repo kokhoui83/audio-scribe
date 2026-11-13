@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-from scribe.application.ports import InboxFile
+from scribe.application.ports import InboxFile, OutOfSequence
 from scribe.domain.job import Job
 
 ERROR_NOTE_SUFFIX = ".error.txt"
@@ -69,6 +69,18 @@ class LocalFileStore:
             shutil.copyfileobj(content, out)
         self._own(target)
         return self._relative(target), target.stat().st_size
+
+    def append_audio(self, stored_path: str, offset: int, content: BinaryIO) -> int:
+        path = self.local_path(stored_path)
+        size = path.stat().st_size if path.is_file() else 0
+        if offset > size or not path.is_file():
+            raise OutOfSequence(expected=size)
+        # Writing at the stated offset, rather than at the end, is what makes
+        # a piece that is sent twice harmless.
+        with open(path, "r+b") as out:
+            out.seek(offset)
+            shutil.copyfileobj(content, out)
+            return max(size, out.tell())
 
     def recover_orphans(self, known_job_ids: set[str]) -> list[str]:
         recovered = []

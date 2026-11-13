@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import BinaryIO
 
-from scribe.domain.job import Job, JobOptions, JobStatus
+from scribe.domain.draft import Draft
+from scribe.domain.job import RECORDING, Job, JobOptions, JobStatus
 from scribe.domain.rendering import render
 from scribe.domain.worker import WorkerState
 
@@ -28,6 +30,14 @@ class OriginalMissing(Exception):
 
 class EmptyUpload(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class TextSoFar:
+    """What has been transcribed of a recording that is still going on."""
+
+    text: str
+    seconds: float  # how much of the recording this covers
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,54 @@ class JobService:
             self._files.discard(job)
             raise
         return job
+
+    def start_recording(self, filename: str, options: JobOptions | None = None) -> Job:
+        """A job for audio that is still to arrive, piece by piece. It is
+        queued at once, so that it is transcribed while it is recorded."""
+        job_id = self._new_id()
+        stored_path, _ = self._files.stage_upload(job_id, filename, io.BytesIO())
+        job = Job.submit(
+            job_id=job_id,
+            filename=stored_path.rsplit("/", 1)[-1],
+            source=RECORDING,
+            stored_path=stored_path,
+            size_bytes=0,
+            now=self._clock.now(),
+            options=options,
+            max_attempts=self._max_attempts,
+            audio_complete=False,
+        )
+        try:
+            self._jobs.add(job)
+        except Exception:
+            self._files.discard(job)
+            raise
+        return job
+
+    def add_audio(self, job_id: str, offset: int, content: BinaryIO) -> Job:
+        """Store the piece of a recording that belongs at ``offset`` bytes.
+        Raises OutOfSequence if audio before it is missing."""
+
+        def store(job: Job) -> None:
+            # Under the job's lock, so pieces cannot be stored through each other.
+            job.expect_audio()
+            size = self._files.append_audio(job.stored_path, offset, content)
+            job.receive_audio(self._clock.now(), size)
+
+        return self._found(self._jobs.update(job_id, store))
+
+    def finish_recording(self, job_id: str) -> Job:
+        """No more audio will come. A recording without any audio is dropped."""
+        job = self._found(self._jobs.update(job_id, lambda j: j.finish_recording(self._clock.now())))
+        if job.size_bytes == 0:
+            self.delete(job_id)
+            raise EmptyUpload("nothing was recorded")
+        return job
+
+    def text_so_far(self, job_id: str) -> TextSoFar:
+        job = self._found(self._jobs.get(job_id, with_transcript=True))
+        draft = job.draft or Draft()
+        return TextSoFar(draft.text, draft.position)
 
     def list(self, status: JobStatus | None = None, limit: int = 100, offset: int = 0) -> list[Job]:
         return self._jobs.list(status, limit, offset)

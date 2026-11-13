@@ -11,10 +11,11 @@ Each requirement has an ID. The executable specifications in
 | Who | Needs |
 | --- | --- |
 | Operator | Start the system with one command, drop files in a folder, get transcripts back. |
-| Occasional user | Upload a file in a browser, read and download the transcript. |
+| Occasional user | Upload a file in a browser, or record a meeting there, and read and download the transcript. |
 | Integrator | Submit files and fetch results from scripts over HTTP. |
 
-Out of scope: live/streaming transcription, user accounts and authentication,
+Out of scope: identifying speakers while a recording is still going on,
+recording the sound of other applications, user accounts and authentication,
 summarisation or any other language-model post-processing, speaker recognition
 across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 
@@ -39,6 +40,20 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 | FR-12 | Speaker identification can be turned off globally or per file; the transcript then has no speaker labels. |
 | FR-13 | Speech-to-text and speaker identification use dedicated local speech models. No large language model is used, and no audio or text leaves the machine. |
 | FR-14 | A recording without speech produces an empty transcript, not a failure. |
+
+### Live recording
+
+| ID | Requirement |
+| --- | --- |
+| FR-50 | A recording can be made in the web page (microphone) or sent through the HTTP API piece by piece; the audio is stored on the server as it arrives. |
+| FR-51 | Speech-to-text starts while the recording is still going on, so that when it ends only the remainder is left to transcribe. |
+| FR-52 | Text is kept only once it is settled: the newest seconds are transcribed again when more audio has arrived, and a piece ends where the recogniser ends a sentence, so no sentence is cut in two. |
+| FR-53 | When the recording ends, speakers are identified over the whole recording, and the result is a job and a transcript like those of any file: all formats, archived original, speaker names, re-run. |
+| FR-54 | The text transcribed so far can be read while the recording is going on. |
+| FR-55 | Each piece of audio is stored exactly once and in order: a piece that is sent twice changes nothing, a piece that would leave a gap is refused. |
+| FR-56 | A recording that receives no audio for a configurable time (a closed browser, a lost connection) is ended automatically and transcribed with what arrived. |
+| FR-57 | A recording in progress does not occupy a worker: other jobs are processed in between. What has been transcribed survives a restart or crash of the worker. |
+| FR-58 | A recording that has ended or was cancelled accepts no more audio; one that ends without any audio leaves no job behind. |
 
 ### Output
 
@@ -70,7 +85,7 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 | ID | Requirement |
 | --- | --- |
 | FR-40 | Jobs can be listed with status, stage and progress; a failed, cancelled or finished job can be re-run; a queued or running job can be cancelled; a job can be deleted. |
-| FR-41 | A web page shows the queue and worker state, accepts uploads, and shows and downloads transcripts. |
+| FR-41 | A web page shows the queue and worker state, accepts uploads and recordings, and shows and downloads transcripts. |
 | FR-42 | A health endpoint reports whether the database is reachable, the number of jobs per status, and the state of every worker. |
 
 ## 3. Quality requirements
@@ -90,5 +105,8 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 
 - Speaker identification uses the `pyannote` community model, which needs a
   free Hugging Face token once, to download it.
-- Accuracy and speed are those of the chosen Whisper model and the hardware;
-  on CPU a large model runs at roughly real-time speed.
+- Accuracy and speed are those of the chosen Whisper model and the hardware.
+- Transcribing while recording only helps where speech-to-text is faster than
+  real time, and it does not shorten speaker identification, which on a CPU
+  is the larger part of the work.
+- A browser only gives access to the microphone on `localhost` or over HTTPS.

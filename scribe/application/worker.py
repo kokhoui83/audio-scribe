@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from datetime import timedelta
 
-from scribe.domain.job import RetryPolicy
+from scribe.domain.job import RecordingPolicy, RetryPolicy
 from scribe.domain.worker import ERROR, READY, WorkerState
 
 from .ports import Clock, FileStore, JobRepository, WorkerRegistry
@@ -30,6 +30,7 @@ class Worker:
         output_formats: tuple[str, ...],
         default_language: str | None,
         heartbeat: timedelta,
+        recording: RecordingPolicy | None = None,
     ) -> None:
         self._id = worker_id
         self._registry = registry
@@ -38,6 +39,7 @@ class Worker:
         self._make_processor = lambda engines: JobProcessor(
             worker_id=worker_id, jobs=jobs, files=files, engines=engines, clock=clock, policy=policy,
             output_formats=output_formats, default_language=default_language, heartbeat=heartbeat,
+            recording=recording,
         )  # fmt: skip
         self._processor: JobProcessor | None = None
         self._engines: Engines | None = None

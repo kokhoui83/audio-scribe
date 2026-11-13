@@ -16,6 +16,9 @@ Without Docker: `pip install -r requirements/base.txt -r requirements/dev.txt`
 and `pytest`; the PostgreSQL contract tests are skipped unless
 `TEST_DATABASE_URL` is set, the ffmpeg tests unless ffmpeg is installed.
 
+The rules in short, for people and coding agents alike, are in
+[AGENTS.md](../../AGENTS.md).
+
 ## Workflow: specification first
 
 1. **Requirement** — add or change a line in `docs/requirements.md`.
@@ -37,6 +40,7 @@ and `pytest`; the PostgreSQL contract tests are skipped unless
 | Use another speech-to-text engine | A new adapter implementing `SpeechRecognizer`; wire it in `bootstrap.load_engines`. |
 | Use another diarizer | A new adapter implementing `Diarizer`; same place. |
 | Store jobs elsewhere | A new `JobRepository`; add it to the `stores` fixture in `tests/contract/test_job_repository.py` so it must pass the same contract. |
+| Change how a recording in progress is cut into pieces | `Draft.extended` in `domain/draft.py`; `tests/unit/test_draft.py` and `recording.feature`. |
 | Add an API endpoint | A method on `JobService` (with a scenario), then a route in `entrypoints/api.py` and a test in `tests/integration/test_api.py`. |
 
 ## Conventions

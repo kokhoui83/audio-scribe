@@ -11,7 +11,10 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
+from .draft import SETTLE_MARGIN_SECONDS, Draft
 from .transcript import Transcript
+
+RECORDING = "recording"  # the ``source`` of a job whose audio is recorded live
 
 
 class JobStatus(StrEnum):
@@ -45,6 +48,18 @@ class RetryPolicy:
 
 
 @dataclass(frozen=True)
+class RecordingPolicy:
+    """How a recording that is still going on is handled."""
+
+    # Wait between two passes over the same recording.
+    pass_seconds: float = 30.0
+    # A recording that received no audio for this long is taken to have ended.
+    idle_seconds: float = 120.0
+    # The newest audio whose words are not kept yet (see Draft).
+    margin_seconds: float = SETTLE_MARGIN_SECONDS
+
+
+@dataclass(frozen=True)
 class JobOptions:
     """Per-file wishes. ``None`` means "use the system default"."""
 
@@ -67,7 +82,7 @@ class JobOptions:
 class Job:
     id: str
     filename: str
-    source: str  # "folder" or "upload"
+    source: str  # "folder", "upload" or RECORDING
     stored_path: str  # relative to the data folder
     size_bytes: int
     created_at: datetime
@@ -89,8 +104,14 @@ class Job:
     num_speakers: int | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # False while a recording is still going on: more audio will arrive.
+    audio_complete: bool = True
+    audio_at: datetime | None = None  # when audio last arrived
     # Only loaded when asked for; None in listings.
     transcript: Transcript | None = None
+    # What has been transcribed of a recording so far. Loaded like the
+    # transcript; None also means "leave what is stored as it is".
+    draft: Draft | None = None
 
     @classmethod
     def submit(
@@ -105,6 +126,7 @@ class Job:
         rel_dir: str = "",
         options: JobOptions | None = None,
         max_attempts: int = 3,
+        audio_complete: bool = True,
     ) -> Job:
         return cls(
             id=job_id,
@@ -117,9 +139,20 @@ class Job:
             rel_dir=rel_dir,
             options=options or JobOptions(),
             max_attempts=max_attempts,
+            audio_complete=audio_complete,
+            audio_at=None if audio_complete else now,
         )
 
     # ------------------------------------------------------------ queries
+
+    @property
+    def is_recording(self) -> bool:
+        """Recorded live, whether or not the recording is still going on."""
+        return self.source == RECORDING
+
+    def audio_stalled(self, now: datetime, idle: timedelta) -> bool:
+        """More audio is expected, but none has arrived for too long."""
+        return not self.audio_complete and self.audio_at is not None and now - self.audio_at > idle
 
     def is_runnable(self, now: datetime) -> bool:
         return self.status is JobStatus.QUEUED and self.run_after <= now
@@ -172,6 +205,8 @@ class Job:
         self.outputs, self.stored_path = list(outputs), stored_path
         self.duration_s, self.language, self.num_speakers = duration_s, language, num_speakers
         self.transcript = transcript
+        if self.is_recording:
+            self.draft = Draft()
         self.error = None
         self.progress = 1.0
         self._close(now)
@@ -192,6 +227,37 @@ class Job:
         self._require_owner(worker_id)
         self.attempts = max(self.attempts - 1, 0)
         self._requeue(now)
+
+    def checkpoint(self, worker_id: str, draft: Draft, duration_s: float) -> None:
+        """Save what a pass over a recording has transcribed."""
+        self._require_owner(worker_id)
+        self.draft, self.duration_s = draft, duration_s
+
+    def pause(self, worker_id: str, now: datetime, resume_at: datetime) -> None:
+        """Hand a recording back until more audio has arrived. Like a release,
+        this is not an attempt: waiting for audio is not a failure."""
+        self._require_owner(worker_id)
+        self.attempts = max(self.attempts - 1, 0)
+        self._requeue(now if self.audio_complete else resume_at)
+
+    # ---------------------------------------------------- recording actions
+
+    def receive_audio(self, now: datetime, size_bytes: int) -> None:
+        """More of the recording has been stored; it is now ``size_bytes`` long."""
+        self.expect_audio()
+        self.size_bytes, self.audio_at = size_bytes, now
+
+    def expect_audio(self) -> None:
+        if self.audio_complete:
+            raise InvalidTransition("this recording has ended and accepts no more audio")
+        self._require(JobStatus.QUEUED, JobStatus.PROCESSING, action="add audio to")
+
+    def finish_recording(self, now: datetime) -> None:
+        if self.audio_complete:
+            raise InvalidTransition("this recording has already ended")
+        self.audio_complete = True
+        if self.status is JobStatus.QUEUED:
+            self.run_after = min(self.run_after, now)  # no need to wait for more audio
 
     # ------------------------------------------------------ system actions
 
@@ -219,6 +285,9 @@ class Job:
         self.attempts = 0
         self.error = None
         self.finished_at = None
+        if self.is_recording:
+            # Whatever was recorded is the recording; transcribe it afresh.
+            self.audio_complete, self.draft = True, Draft()
         self._requeue(now)
 
     def relocate(self, stored_path: str) -> None:

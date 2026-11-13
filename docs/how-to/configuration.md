@@ -42,6 +42,13 @@ mistyped value stops the service with a message naming the variable.
 | `MAX_ATTEMPTS` | `3` | Attempts per job before it is failed. |
 | `LEASE_SECONDS` | `120` | A job whose worker is silent this long is taken back. |
 
+## Live recording
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RECORDING_PASS_SECONDS` | `30` | How long a recording in progress waits between two transcription passes. Lower shows text sooner and repeats more work. |
+| `RECORDING_IDLE_SECONDS` | `120` | A recording that received no audio for this long is ended and transcribed. |
+
 Advanced, rarely needed (add them to the `x-env` block in `compose.yaml`):
 `AUDIO_EXTENSIONS`, `SCAN_SECONDS`, `POLL_SECONDS`, `HEARTBEAT_SECONDS`,
 `RETRY_BACKOFF_SECONDS`.

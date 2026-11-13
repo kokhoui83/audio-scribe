@@ -200,6 +200,102 @@ class TestActions:
         assert response.status_code == 409 and "no longer available" in response.json()["detail"]
 
 
+class TestRecording:
+    # The newest five seconds are held back, so the first voice must be followed by more than that.
+    FIRST = recording(
+        ("anna", "Hello Ben. How are you today my friend?"),
+        ("ben", "Fine thanks. I was away for a week and only got back today."),
+    )
+    SECOND = recording(("anna", "Very well."))
+
+    def start(self, api, **form) -> dict:
+        response = api.http.post("/api/recordings", data={"filename": "standup.webm", **form})
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def send(self, api, job, piece: str, offset: int):
+        return api.http.post(
+            f"/api/recordings/{job['id']}/audio",
+            files={"piece": ("piece", piece.encode())},
+            data={"offset": str(offset)},
+        )
+
+    def test_a_started_recording_is_a_queued_job_that_expects_audio(self, api):
+        job = self.start(api, language="EN", num_speakers="2")
+        assert (job["filename"], job["source"], job["status"], job["recording"], job["size_bytes"]) == (
+            "standup.webm",
+            "recording",
+            "queued",
+            True,
+            0,
+        )
+        assert job["options"] == {"language": "en", "num_speakers": 2}
+
+    def test_a_recording_gets_a_name_when_none_is_given(self, api):
+        assert api.http.post("/api/recordings").json()["filename"] == "recording.webm"
+
+    def test_an_uploaded_file_is_not_a_recording(self, api):
+        assert api.upload()["recording"] is False
+
+    def test_pieces_are_stored_and_the_text_so_far_can_be_read(self, api):
+        job = self.start(api)
+        url = f"/api/jobs/{job['id']}"
+        assert api.http.get(url + "/draft").json() == {"text": "", "seconds": 0.0}
+        sent = self.send(api, job, self.FIRST, 0)
+        assert sent.status_code == 200 and sent.json()["size_bytes"] == len(self.FIRST)
+        api.worker.tick()
+        draft = api.http.get(url + "/draft").json()
+        assert draft["text"] == "Hello Ben. How are you today my friend?" and draft["seconds"] > 4
+        listed = api.http.get(url).json()
+        assert (listed["status"], listed["recording"], listed["attempts"]) == ("queued", True, 0)
+        assert listed["duration_s"] > 0
+
+    def test_finishing_leads_to_a_transcript_with_speakers(self, api):
+        job = self.start(api)
+        self.send(api, job, self.FIRST, 0)
+        api.worker.tick()
+        self.send(api, job, self.SECOND, len(self.FIRST))
+        finished = api.http.post(f"/api/recordings/{job['id']}/finish")
+        assert finished.status_code == 200 and finished.json()["recording"] is False
+        api.worker.tick()
+        done = api.http.get(f"/api/jobs/{job['id']}").json()
+        assert (done["status"], done["num_speakers"]) == ("done", 2)
+        text = api.http.get(f"/api/jobs/{job['id']}/transcript", params={"format": "txt"}).text
+        assert "only got back today." in text and "Very well." in text
+
+    def test_a_repeated_piece_is_accepted_and_a_gap_is_409_naming_the_expected_offset(self, api):
+        job = self.start(api)
+        self.send(api, job, self.FIRST, 0)
+        assert self.send(api, job, self.FIRST, 0).json()["size_bytes"] == len(self.FIRST)
+        gap = self.send(api, job, self.SECOND, len(self.FIRST) + 1)
+        assert gap.status_code == 409 and gap.json()["expected_offset"] == len(self.FIRST)
+
+    def test_audio_for_a_closed_recording_is_409(self, api):
+        job = self.start(api)
+        self.send(api, job, self.FIRST, 0)
+        api.http.post(f"/api/recordings/{job['id']}/finish")
+        assert self.send(api, job, self.SECOND, len(self.FIRST)).status_code == 409
+        assert api.http.post(f"/api/recordings/{job['id']}/finish").status_code == 409
+
+    def test_audio_for_an_uploaded_file_is_409(self, api):
+        assert self.send(api, api.upload(), self.SECOND, len(AUDIO)).status_code == 409
+
+    def test_finishing_without_audio_is_400_and_leaves_no_job(self, api):
+        job = self.start(api)
+        response = api.http.post(f"/api/recordings/{job['id']}/finish")
+        assert response.status_code == 400 and "nothing was recorded" in response.json()["detail"]
+        assert api.http.get("/api/jobs").json()["jobs"] == []
+
+    def test_a_negative_offset_is_rejected(self, api):
+        assert self.send(api, self.start(api), self.FIRST, -1).status_code == 422
+
+    def test_an_unknown_recording_is_404(self, api):
+        missing = {"id": MISSING.rsplit("/", 1)[1]}
+        assert self.send(api, missing, self.FIRST, 0).status_code == 404
+        assert api.http.post(f"/api/recordings/{missing['id']}/finish").status_code == 404
+        assert api.http.get(MISSING + "/draft").status_code == 404
+
+
 class TestHealth:
     def test_health_reports_queue_and_workers(self, api):
         api.finished()
@@ -225,3 +321,8 @@ def test_the_web_page_is_served(api):
     response = api.http.get("/")
     assert response.status_code == 200 and "text/html" in response.headers["content-type"]
     assert "Audio Scribe" in response.text
+
+
+def test_the_web_page_can_record(api):
+    page = api.http.get("/").text
+    assert 'id="record"' in page and "/api/recordings" in page

@@ -48,6 +48,9 @@ class Settings:
     # watcher
     scan_seconds: float
     stable_seconds: float
+    # live recording
+    recording_pass_seconds: float
+    recording_idle_seconds: float
     # speech models
     device: str
     speech_engine: str
@@ -106,6 +109,8 @@ class Settings:
             poll_seconds=read.number("POLL_SECONDS", 2, minimum=0.1),
             scan_seconds=read.number("SCAN_SECONDS", 2, minimum=0.1),
             stable_seconds=read.number("STABLE_SECONDS", 5, minimum=0),
+            recording_pass_seconds=read.number("RECORDING_PASS_SECONDS", 30, minimum=1),
+            recording_idle_seconds=read.number("RECORDING_IDLE_SECONDS", 120, minimum=10),
             device=device,
             speech_engine=engine,
             whisper_cpp_binary=read.text("WHISPER_CPP_BIN", "whisper-cli"),

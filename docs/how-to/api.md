@@ -54,6 +54,35 @@ JSON shape:
 }
 ```
 
+## Send a recording while it is being made
+
+For audio that is still being produced. The server transcribes what has
+arrived while the rest is on its way; see [Record a meeting](recording.md).
+
+```sh
+id=$(curl -s -F filename=standup.webm localhost:8090/api/recordings | jq -r .id)
+
+# For each piece, in order. "offset" is the number of bytes sent before it.
+curl -F piece=@piece-000.bin -F offset=0     localhost:8090/api/recordings/$id/audio
+curl -F piece=@piece-001.bin -F offset=40960 localhost:8090/api/recordings/$id/audio
+
+curl localhost:8090/api/jobs/$id/draft            # {"text": "…", "seconds": 61.3}
+curl -X POST localhost:8090/api/recordings/$id/finish
+```
+
+- The pieces, put together, must be one media file that ffmpeg can read from
+  its beginning, such as the output of a browser's `MediaRecorder` or of
+  `ffmpeg -f webm -live 1`. They can be cut anywhere.
+- The answer to each piece is the job; its `size_bytes` is the offset of the
+  next piece. Sending a piece again with the same offset is harmless. A piece
+  whose offset is beyond what the server has is refused with `409`, and the
+  answer names the `expected_offset`.
+- `POST /api/recordings` takes the same optional fields as an upload, plus
+  `filename` (its extension is only used for naming).
+- While the recording runs, the job has `"recording": true` and its
+  `duration_s` is the length heard so far. Without `finish`, the recording
+  is ended after `RECORDING_IDLE_SECONDS` without audio.
+
 ## All endpoints
 
 | Method | Path | Purpose | Errors |
@@ -63,6 +92,10 @@ JSON shape:
 | `POST` | `/api/jobs` | Upload | `400` empty file / bad option |
 | `GET` | `/api/jobs/{id}` | One job | `404` |
 | `GET` | `/api/jobs/{id}/transcript?format=&download=` | Transcript | `409` not done, `400` bad format |
+| `GET` | `/api/jobs/{id}/draft` | Text of a recording so far, and the seconds it covers | `404` |
+| `POST` | `/api/recordings` | Start a recording | `400` bad option |
+| `POST` | `/api/recordings/{id}/audio` | Add a piece (`piece`, `offset`) | `409` gap / recording closed, `404` |
+| `POST` | `/api/recordings/{id}/finish` | End the recording | `400` nothing recorded, `409` already ended, `404` |
 | `PUT` | `/api/jobs/{id}/speakers` | Name speakers: `{"names": {"Speaker 1": "Anna"}}` | `404` |
 | `POST` | `/api/jobs/{id}/retry` | Run a failed, cancelled or finished job again | `409` in flight / original gone |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a queued or running job | `409` already finished |

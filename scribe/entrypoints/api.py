@@ -18,6 +18,7 @@ from scribe.application.management import (
     OriginalMissing,
     TranscriptNotReady,
 )
+from scribe.application.ports import OutOfSequence
 from scribe.domain.job import InvalidTransition, Job, JobOptions, JobStatus
 from scribe.domain.rendering import FORMATS
 
@@ -52,7 +53,23 @@ def job_view(job: Job) -> dict[str, Any]:
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
+        "recording": not job.audio_complete,
     }
+
+
+def _options(
+    language: str, diarize: str, num_speakers: str, min_speakers: str, max_speakers: str
+) -> JobOptions:
+    options = JobOptions(
+        language=language.strip().lower() or None,
+        diarize=_optional_flag("diarize", diarize),
+        num_speakers=_optional_count("num_speakers", num_speakers),
+        min_speakers=_optional_count("min_speakers", min_speakers),
+        max_speakers=_optional_count("max_speakers", max_speakers),
+    )
+    if options.min_speakers and options.max_speakers and options.min_speakers > options.max_speakers:
+        raise HTTPException(400, "min_speakers cannot be greater than max_speakers")
+    return options
 
 
 def _optional_count(name: str, raw: str) -> int | None:
@@ -87,6 +104,10 @@ def create_app(service: JobService) -> FastAPI:
     @app.exception_handler(TranscriptNotReady)
     def _conflict(_, exc):
         return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(OutOfSequence)
+    def _out_of_sequence(_, exc):
+        return JSONResponse({"detail": str(exc), "expected_offset": exc.expected}, status_code=409)
 
     @app.exception_handler(EmptyUpload)
     def _bad_upload(_, exc):
@@ -137,16 +158,33 @@ def create_app(service: JobService) -> FastAPI:
         min_speakers: Annotated[str, Form()] = "",
         max_speakers: Annotated[str, Form()] = "",
     ):
-        options = JobOptions(
-            language=language.strip().lower() or None,
-            diarize=_optional_flag("diarize", diarize),
-            num_speakers=_optional_count("num_speakers", num_speakers),
-            min_speakers=_optional_count("min_speakers", min_speakers),
-            max_speakers=_optional_count("max_speakers", max_speakers),
-        )
-        if options.min_speakers and options.max_speakers and options.min_speakers > options.max_speakers:
-            raise HTTPException(400, "min_speakers cannot be greater than max_speakers")
+        options = _options(language, diarize, num_speakers, min_speakers, max_speakers)
         return job_view(service.submit_upload(file.filename or "audio", file.file, options))
+
+    @app.post("/api/recordings", status_code=201)
+    def start_recording(
+        filename: Annotated[str, Form()] = "",
+        language: Annotated[str, Form()] = "",
+        diarize: Annotated[str, Form()] = "",
+        num_speakers: Annotated[str, Form()] = "",
+        min_speakers: Annotated[str, Form()] = "",
+        max_speakers: Annotated[str, Form()] = "",
+    ):
+        options = _options(language, diarize, num_speakers, min_speakers, max_speakers)
+        return job_view(service.start_recording(filename.strip() or "recording.webm", options))
+
+    @app.post("/api/recordings/{job_id}/audio")
+    def add_audio(job_id: str, piece: Annotated[UploadFile, File()], offset: Annotated[int, Form(ge=0)]):
+        return job_view(service.add_audio(job_id, offset, piece.file))
+
+    @app.post("/api/recordings/{job_id}/finish")
+    def finish_recording(job_id: str):
+        return job_view(service.finish_recording(job_id))
+
+    @app.get("/api/jobs/{job_id}/draft")
+    def draft(job_id: str):
+        so_far = service.text_so_far(job_id)
+        return {"text": so_far.text, "seconds": so_far.seconds}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str):

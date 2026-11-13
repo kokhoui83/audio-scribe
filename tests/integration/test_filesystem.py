@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from scribe.adapters.filesystem import LocalFileStore
+from scribe.application.ports import OutOfSequence
 from scribe.domain.job import Job
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -72,3 +73,36 @@ def test_a_file_returned_to_the_inbox_does_not_replace_a_newer_one(store, tmp_pa
 def test_writing_is_atomic_and_leaves_no_temporary_files(store, tmp_path):
     store.write_outputs(job(store), {"md": "text", "json": "{}"})
     assert sorted(p.name for p in (tmp_path / "output").iterdir()) == ["call.json", "call.md"]
+
+
+class TestAppendingAudio:
+    @pytest.fixture
+    def stored(self, store):
+        return store.stage_upload("job-1", "standup.webm", io.BytesIO(b""))[0]
+
+    def test_pieces_are_appended_in_order(self, store, stored):
+        assert store.append_audio(stored, 0, io.BytesIO(b"abc")) == 3
+        assert store.append_audio(stored, 3, io.BytesIO(b"def")) == 6
+        assert store.local_path(stored).read_bytes() == b"abcdef"
+
+    def test_a_piece_that_is_sent_again_changes_nothing(self, store, stored):
+        store.append_audio(stored, 0, io.BytesIO(b"abc"))
+        store.append_audio(stored, 3, io.BytesIO(b"def"))
+        assert store.append_audio(stored, 0, io.BytesIO(b"abc")) == 6
+        assert store.local_path(stored).read_bytes() == b"abcdef"
+
+    def test_a_piece_that_was_only_partly_stored_is_completed(self, store, stored):
+        store.append_audio(stored, 0, io.BytesIO(b"abcd"))
+        assert store.append_audio(stored, 3, io.BytesIO(b"def")) == 6
+        assert store.local_path(stored).read_bytes() == b"abcdef"
+
+    def test_a_piece_that_would_leave_a_gap_is_refused(self, store, stored):
+        store.append_audio(stored, 0, io.BytesIO(b"abc"))
+        with pytest.raises(OutOfSequence) as refusal:
+            store.append_audio(stored, 5, io.BytesIO(b"x"))
+        assert refusal.value.expected == 3 and "byte 3" in str(refusal.value)
+        assert store.local_path(stored).read_bytes() == b"abc"
+
+    def test_audio_cannot_be_added_to_a_file_that_is_gone(self, store):
+        with pytest.raises(OutOfSequence):
+            store.append_audio(".work/job-9/gone.webm", 0, io.BytesIO(b"abc"))

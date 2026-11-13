@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from scribe.application.management import OriginalMissing, TranscriptNotReady
+from scribe.application.management import EmptyUpload, OriginalMissing, TranscriptNotReady
+from scribe.application.ports import OutOfSequence
 from scribe.domain.job import InvalidTransition, JobOptions
 from scribe.domain.worker import ERROR, READY
 from tests.fakes import NOT_AUDIO, recording
 
-scenarios("intake.feature", "transcription.feature", "reliability.feature", "management.feature")
+scenarios(
+    "intake.feature",
+    "transcription.feature",
+    "reliability.feature",
+    "management.feature",
+    "recording.feature",
+)
 
 DEFAULT_RECORDING = recording(("anna", "Hello there."))
 
@@ -199,6 +207,77 @@ def _(world, reason):
 @when("the speech models become available")
 def _(world):
     world.engines_error = None
+
+
+# ---------------------------------------------------------------- recording
+
+
+@given(parsers.parse("the newest {seconds:d} second of a recording is held back"))
+def _(world, seconds):
+    world.recording = replace(world.recording, margin_seconds=seconds)
+
+
+@given(parsers.parse('a recording "{name}" is started'))
+@when(parsers.parse('a recording "{name}" is started'))
+def _(world, name):
+    world.service.start_recording(name)
+
+
+@given(parsers.parse('this audio arrives for "{name}":'))
+@when(parsers.parse('this audio arrives for "{name}":'))
+def _(world, name, datatable):
+    world.send_audio(name, _script(datatable))
+
+
+@given(parsers.parse('a piece of audio arrives for "{name}" that cannot be decoded'))
+def _(world, name):
+    world.send_audio(name, NOT_AUDIO)
+
+
+@when(parsers.parse('a piece of audio arrives for "{name}"'))
+def _(world, name):
+    world.attempt(lambda: world.send_audio(name, DEFAULT_RECORDING))
+
+
+@when(parsers.parse('a piece of audio arrives for "{name}" that skips ahead'))
+def _(world, name):
+    world.attempt(lambda: world.send_audio(name, DEFAULT_RECORDING, skip=10))
+
+
+@when(parsers.parse('the last piece of "{name}" is sent again'))
+def _(world, name):
+    world.send_again(name)
+
+
+@given(parsers.parse('the recording "{name}" is finished'))
+@when(parsers.parse('the recording "{name}" is finished'))
+def _(world, name):
+    world.attempt(lambda: world.service.finish_recording(world.job(name).id))
+
+
+@then(parsers.re(r'the job for "(?P<name>.+)" is (?P<state>still|no longer) recording'))
+def _(world, name, state):
+    assert world.job(name).audio_complete is (state == "no longer")
+
+
+@then(parsers.re(r'the text so far of "(?P<name>.+)" is "(?P<text>.*)"'))
+def _(world, name, text):
+    assert world.service.text_so_far(world.job(name).id).text == text
+
+
+@then("the request is refused because audio is missing before it")
+def _(world):
+    assert isinstance(world.refusal, OutOfSequence)
+
+
+@then("the request is refused because the recording is closed")
+def _(world):
+    assert isinstance(world.refusal, InvalidTransition)
+
+
+@then("the request is refused because nothing was recorded")
+def _(world):
+    assert isinstance(world.refusal, EmptyUpload)
 
 
 # ------------------------------------------------------------ user actions

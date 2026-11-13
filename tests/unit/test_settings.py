@@ -19,6 +19,7 @@ def test_defaults_work_without_any_configuration():
         None,
     )
     assert (s.max_attempts, s.lease_seconds, s.stable_seconds) == (3, 120, 5.0)
+    assert (s.recording_pass_seconds, s.recording_idle_seconds) == (30.0, 120.0)
     assert {"mp3", "wav", "m4a", "flac", "ogg", "opus", "mp4"} <= s.audio_extensions
 
 
@@ -65,6 +66,8 @@ def test_values_are_parsed():
         {"DEVICE": "cuda", "SPEECH_ENGINE": "whisper-cpp"},
         {"DIARIZATION_DEVICE": "vulkan"},
         {"GPU_INDEX": "-1"},
+        {"RECORDING_PASS_SECONDS": "0"},
+        {"RECORDING_IDLE_SECONDS": "soon"},
     ],
 )
 def test_mistakes_are_reported_with_the_variable_name(env):

@@ -62,6 +62,17 @@
   .turn .who { font-weight: 600; margin-right: 8px; }
   .turn .at { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .turn p { margin: 2px 0 0; }
+  .record { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .record button { font-size: 15px; padding: 7px 16px; }
+  button.stop { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .live { color: var(--bad); font-variant-numeric: tabular-nums; }
+  .live .dot, .status-recording .dot { display: inline-block; margin-right: 6px; background: var(--bad);
+          animation: pulse 1.2s ease-in-out infinite; }
+  .status-recording { color: var(--bad); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .live .dot, .status-recording .dot { animation: none; } }
+  .so-far { max-height: 180px; overflow-y: auto; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line);
+            border-radius: 8px; background: var(--bg); white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -74,7 +85,13 @@
   <div id="banners"></div>
 
   <section class="panel">
-    <h2>Transcribe a file</h2>
+    <h2>Record or transcribe a file</h2>
+    <div class="record">
+      <button id="record" class="primary">Record</button>
+      <span id="record-time" class="live" hidden><span class="dot"></span><span id="record-clock">00:00:00</span></span>
+      <span id="record-note" class="sub">Records the microphone. Transcription starts while you record; speakers are identified when you stop.</span>
+    </div>
+    <div id="so-far" class="so-far" hidden></div>
     <div id="drop" class="drop" tabindex="0" role="button">
       Drop audio or video files here, or click to choose.<br>
       <span class="sub">Files placed in the <code>inbox</code> folder are picked up automatically.</span>
@@ -168,8 +185,13 @@ async function refreshHealth() {
 // -------------------------------------------------------------------- jobs
 function statusCell(job) {
   const cell = el("td");
-  cell.append(el("span", { className: `status-${job.status}` }, job.status));
-  if (job.status === "processing") {
+  if (job.recording && ["queued", "processing"].includes(job.status)) {
+    cell.append(el("span", { className: "status-recording" }, el("span", { className: "dot" }), "recording"),
+                el("div", { className: "sub" }, job.status === "processing" ? "transcribing what has arrived" : "transcribed as it arrives"));
+  } else {
+    cell.append(el("span", { className: `status-${job.status}` }, job.status));
+  }
+  if (job.status === "processing" && !job.recording) {
     cell.append(el("br"), el("progress", { max: 1, value: job.progress }),
                 el("div", { className: "sub" }, `${job.stage || ""} ${Math.round(job.progress * 100)}%`));
   } else if (job.status === "queued" && job.attempts > 0) {
@@ -205,7 +227,7 @@ async function refreshJobs() {
   $("empty").hidden = jobs.length > 0;
   $("jobs").replaceChildren(...jobs.map((job) => el("tr", {},
     el("td", { className: "name" }, job.filename,
-       el("div", { className: "sub" }, [job.source === "upload" ? "uploaded" : `inbox/${job.folder ? job.folder + "/" : ""}`,
+       el("div", { className: "sub" }, [job.source === "upload" ? "uploaded" : job.source === "recording" ? "recorded" : `inbox/${job.folder ? job.folder + "/" : ""}`,
                                          `${(job.size_bytes / 1048576).toFixed(1)} MB`].join(" · "))),
     statusCell(job),
     el("td", {}, job.duration_s ? clock(job.duration_s) : ""),
@@ -242,6 +264,130 @@ $("file").onchange = (event) => { upload([...event.target.files]); event.target.
 drop.ondragover = (event) => { event.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
 drop.ondrop = (event) => { event.preventDefault(); drop.classList.remove("over"); upload([...event.dataTransfer.files]); };
+
+// --------------------------------------------------------------- recording
+// The recording is sent while it is made, a piece every few seconds, so the
+// server can transcribe it meanwhile. A copy is kept here until the server
+// has all of it, and offered as a download if something goes wrong.
+const PIECE_MS = 5000;
+const SEND_ATTEMPTS = 5;
+const FORMATS = [["audio/webm;codecs=opus", "webm"], ["audio/webm", "webm"], ["audio/ogg;codecs=opus", "ogg"], ["audio/mp4", "m4a"]];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let recording = null;
+
+function recordNote(...content) { $("record-note").replaceChildren(...content); }
+
+async function startRecording() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    alert("This browser cannot record here. Microphone access needs http://localhost or HTTPS.");
+    return;
+  }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (error) { alert(`The microphone cannot be used: ${error.message}`); return; }
+  const [mime, extension] = FORMATS.find(([type]) => MediaRecorder.isTypeSupported(type)) || ["", "webm"];
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const form = new FormData();
+  form.append("filename", `Recording ${stamp}.${extension}`);
+  form.append("language", $("language").value);
+  form.append("num_speakers", $("speakers").value);
+  form.append("diarize", $("diarize").checked ? "" : "false");
+  let job;
+  try { job = await (await api("/api/recordings", { method: "POST", body: form })).json(); }
+  catch (error) { stream.getTracks().forEach((track) => track.stop()); alert(error.message); return; }
+
+  const media = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  const current = { job, media, stream, mime: media.mimeType || mime, pieces: [], sent: 0,
+                    sending: Promise.resolve(), problem: null, started: Date.now() };
+  media.ondataavailable = (event) => {
+    if (!event.data.size) return;
+    current.pieces.push(event.data);
+    current.sending = current.sending.then(() => sendPiece(current, event.data));
+  };
+  media.onstop = () => finishRecording(current);
+  media.start(PIECE_MS);
+  recording = current;
+  $("record").textContent = "Stop";
+  $("record").className = "stop";
+  $("record-time").hidden = false;
+  $("so-far").textContent = "";
+  recordNote(`Recording "${job.filename}".`);
+  refresh();
+}
+
+async function sendPiece(current, piece) {
+  if (current.problem) return;
+  for (let attempt = 1; ; attempt++) {
+    const form = new FormData();
+    form.append("piece", piece, "piece");
+    form.append("offset", String(current.sent));
+    let response = null;
+    try { response = await fetch(`/api/recordings/${current.job.id}/audio`, { method: "POST", body: form }); } catch (_) {}
+    if (response && response.ok) { current.sent += piece.size; return; }
+    if (response && response.status < 500) {  // refused: the job was cancelled, deleted or closed
+      let detail = response.statusText;
+      try { detail = (await response.json()).detail || detail; } catch (_) {}
+      current.problem = `The server no longer accepts this recording (${detail}).`;
+    } else if (attempt >= SEND_ATTEMPTS) {
+      current.problem = "The server cannot be reached.";
+    } else {
+      await sleep(2000);
+      continue;
+    }
+    if (current.media.state !== "inactive") current.media.stop();
+    return;
+  }
+}
+
+async function finishRecording(current) {
+  current.stream.getTracks().forEach((track) => track.stop());
+  recording = null;
+  $("record").textContent = "Record";
+  $("record").className = "primary";
+  $("record").disabled = true;
+  $("record-time").hidden = true;
+  recordNote("Sending the last of the recording…");
+  await current.sending;
+  if (!current.problem) {
+    try { await api(`/api/recordings/${current.job.id}/finish`, { method: "POST" }); }
+    catch (error) { current.problem = `The recording could not be finished (${error.message}).`; }
+  }
+  $("record").disabled = false;
+  $("so-far").hidden = true;
+  if (current.problem) {
+    const copy = URL.createObjectURL(new Blob(current.pieces, { type: current.mime }));
+    recordNote(el("span", { className: "error" }, `${current.problem} `),
+               el("a", { href: copy, download: current.job.filename }, "Save the recording"),
+               " and upload it below to transcribe it.");
+  } else {
+    recordNote(`"${current.job.filename}" is recorded. The rest is being transcribed and speakers identified; see the list below.`);
+  }
+  refresh();
+}
+
+async function refreshRecording() {
+  const current = recording;
+  if (!current) return;
+  $("record-clock").textContent = clock((Date.now() - current.started) / 1000);
+  if (Date.now() - (current.textAt || 0) < PIECE_MS) return;
+  current.textAt = Date.now();
+  try {
+    const draft = await (await api(`/api/jobs/${current.job.id}/draft`)).json();
+    if (recording !== current || !draft.text) return;
+    const box = $("so-far");
+    box.hidden = false;
+    box.textContent = draft.text;
+    box.scrollTop = box.scrollHeight;
+  } catch (_) {}
+}
+$("record").onclick = () => {
+  if (!recording) startRecording();
+  else if (recording.media.state !== "inactive") recording.media.stop();
+};
+window.addEventListener("beforeunload", (event) => { if (recording) event.preventDefault(); });
+setInterval(refreshRecording, 1000);
 
 // ------------------------------------------------------------------ viewer
 const COLORS = ["#2f6fed", "#c2410c", "#17804d", "#9333ea", "#b45309", "#0e7490", "#be185d", "#4d7c0f"];
