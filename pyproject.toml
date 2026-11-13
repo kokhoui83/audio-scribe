@@ -3,6 +3,8 @@ name = "audio-scribe"
 version = "0.1.0"
 description = "Folder-watching audio transcription with speaker diarization"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

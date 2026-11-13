@@ -57,3 +57,8 @@ docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
 ```sh
 ./t.sh          # lint + all tests in Docker, including the PostgreSQL contract tests
 ```
+
+## License
+
+[MIT](LICENSE). The models it downloads have their own licenses: the Whisper models
+are MIT, and the pyannote speaker model is CC-BY-4.0.
