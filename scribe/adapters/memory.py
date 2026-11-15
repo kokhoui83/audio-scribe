@@ -69,6 +69,8 @@ class InMemoryJobRepository:
             saved = copy.deepcopy(job)
             if saved.transcript is None:
                 saved.transcript = stored.transcript
+            if saved.draft is None:
+                saved.draft = stored.draft
             self._jobs[job_id] = saved
             return job
 
@@ -88,7 +90,7 @@ class InMemoryJobRepository:
     @staticmethod
     def _copy(job: Job, with_transcript: bool) -> Job:
         clone = copy.deepcopy(job)
-        return clone if with_transcript else replace(clone, transcript=None)
+        return clone if with_transcript else replace(clone, transcript=None, draft=None)
 
 
 class InMemoryWorkerRegistry:

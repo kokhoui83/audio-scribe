@@ -8,7 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from scribe.domain.job import Job, JobStatus, NotOwner, RetryPolicy
+from scribe.domain.draft import Draft
+from scribe.domain.job import Job, JobStatus, NotOwner, RecordingPolicy, RetryPolicy
 from scribe.domain.rendering import render
 from scribe.domain.transcript import Transcript, build_transcript
 
@@ -56,6 +57,7 @@ class JobProcessor:
         output_formats: tuple[str, ...],
         default_language: str | None,
         heartbeat: timedelta,
+        recording: RecordingPolicy | None = None,
     ) -> None:
         self._worker_id = worker_id
         self._jobs = jobs
@@ -66,6 +68,7 @@ class JobProcessor:
         self._output_formats = output_formats
         self._default_language = default_language
         self._heartbeat = heartbeat
+        self._recording = recording or RecordingPolicy()
         self._stop_requested = False
         self._current: str | None = None
         self._lost = False
@@ -87,8 +90,9 @@ class JobProcessor:
             self._lost = True
 
     def process_next(self) -> Job | None:
-        """Process one job. Returns it in its new state, or None if the queue
-        had nothing to do."""
+        """Process one job, or make one pass over a recording that is still
+        going on. Returns the job in its new state, or None if the queue had
+        nothing to do."""
         job = self._jobs.claim_next(self._worker_id, self._clock.now())
         if job is None:
             return None
@@ -98,8 +102,9 @@ class JobProcessor:
         self._current, self._lost, self._renewed_at = job.id, False, self._clock.now()
         try:
             transcript = self._transcribe(job)
-            self._enter(job, "writing", 0.97)
-            self._finish(job, transcript)
+            if transcript is not None:
+                self._enter(job, "writing", 0.97)
+                self._finish(job, transcript)
         except _Abandon:
             self._abandon(job)
         except NotOwner:
@@ -115,34 +120,99 @@ class JobProcessor:
 
     # --------------------------------------------------------------- steps
 
-    def _transcribe(self, job: Job) -> Transcript:
+    def _transcribe(self, job: Job) -> Transcript | None:
+        """The transcript, or None after a pass over a recording that is
+        still going on: the job is then back in the queue.
+
+        A recording is transcribed from where its draft ends. For any other
+        file the draft is empty and this is one pass over all of it."""
         diarizer = self._engines.diarizer if job.options.diarize is not False else None
         recognition_share = 0.6 if diarizer else 0.9
+        path = self._files.local_path(job.stored_path)
 
         self._enter(job, "decoding", 0.0)
-        audio = self._engines.decoder.decode(self._files.local_path(job.stored_path))
+        draft = Draft()
+        if job.is_recording:
+            job = self._close_if_abandoned(job)
+            draft = self._draft(job)
+        final = job.audio_complete
+        try:
+            unheard = self._engines.decoder.decode(path, start=draft.position)
+        except UnreadableAudio:
+            if final:
+                raise
+            # Too little has arrived to be decoded; look again later.
+            self._pause(job, draft, heard=draft.position)
+            return None
 
         self._enter(job, "transcribing", 0.05)
-        recognition = self._engines.recognizer.recognize(
-            audio,
-            job.options.language or self._default_language,
-            self._progress(job, 0.05, 0.05 + recognition_share),
+        heard, language = (), None
+        if unheard.duration > 0:
+            recognition = self._engines.recognizer.recognize(
+                unheard,
+                job.options.language or self._default_language or draft.language,
+                self._progress(job, 0.05, 0.05 + recognition_share),
+            )
+            heard, language = recognition.words, recognition.language
+        whole = draft.position + unheard.duration
+        draft = draft.extended(
+            heard,
+            seconds=unheard.duration,
+            language=language,
+            final=final,
+            margin=self._recording.margin_seconds,
         )
-        words = list(recognition.words)
+        if not final:
+            self._pause(job, draft, heard=whole)
+            return None
 
         turns = None
-        if diarizer and words:
+        if diarizer and draft.words:
             self._enter(job, "identifying speakers", 0.05 + recognition_share)
+            # Speakers are told apart by comparing all of the recording.
+            audio = unheard if unheard.duration == whole else self._engines.decoder.decode(path)
             turns = diarizer.diarize(audio, job.options, self._progress(job, 0.05 + recognition_share, 0.95))
 
         return build_transcript(
-            words,
+            draft.words,
             turns,
             file=job.filename,
-            language=recognition.language,
-            duration=audio.duration,
+            language=draft.language,
+            duration=whole,
             created=self._clock.now().isoformat(timespec="seconds"),
         )
+
+    def _draft(self, job: Job) -> Draft:
+        stored = self._jobs.get(job.id, with_transcript=True)
+        return (stored.draft if stored else None) or Draft()
+
+    def _close_if_abandoned(self, job: Job) -> Job:
+        """End a recording whose source has gone quiet (say, a closed browser
+        tab), so that what did arrive is transcribed."""
+        now, idle = self._clock.now(), timedelta(seconds=self._recording.idle_seconds)
+        if not job.audio_stalled(now, idle):
+            return job
+
+        def close(current: Job) -> None:
+            # Checked again under the lock: audio may just have arrived.
+            if current.audio_stalled(now, idle):
+                current.finish_recording(now)
+                log.warning("job %s: no audio for %.0f s; the recording is taken to have ended",
+                            job.id, idle.total_seconds())  # fmt: skip
+
+        return self._update(job.id, close)
+
+    def _pause(self, job: Job, draft: Draft, *, heard: float) -> None:
+        now = self._clock.now()
+        resume_at = now + timedelta(seconds=self._recording.pass_seconds)
+
+        def pause(current: Job) -> None:
+            current.checkpoint(self._worker_id, draft, duration_s=heard)
+            current.pause(self._worker_id, now, resume_at)
+
+        self._check()
+        self._update(job.id, pause)
+        log.info("job %s: recording in progress, %.0f of %.0f s transcribed", job.id, draft.position, heard)
 
     def _finish(self, job: Job, transcript: Transcript) -> None:
         documents = {fmt: render(transcript, fmt, job.speaker_names) for fmt in self._output_formats}

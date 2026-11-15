@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import uuid
 from datetime import timedelta
 from functools import cached_property
@@ -16,7 +17,7 @@ from scribe.application.intake import InboxWatcher
 from scribe.application.maintenance import Housekeeper
 from scribe.application.management import JobService
 from scribe.application.worker import Engines, Worker
-from scribe.domain.job import Job, RetryPolicy
+from scribe.domain.job import Job, RecordingPolicy, RetryPolicy
 from tests.fakes import FakeClock, FakeDecoder, FakeDiarizer, FakeRecognizer, WorkerCrash
 
 STABLE_SECONDS = 5
@@ -33,6 +34,8 @@ class World:
         self.recognizer = FakeRecognizer()
         self.diarizer = FakeDiarizer()
         self.policy = RetryPolicy(max_attempts=3, backoff_seconds=30)
+        self.recording = RecordingPolicy()
+        self.last_piece: tuple[int, bytes] | None = None
         # Settings a scenario may change before the components are first used.
         self.output_formats: tuple[str, ...] = ("md",)
         self.archive_originals = True
@@ -107,6 +110,7 @@ class World:
             output_formats=self.output_formats,
             default_language=self.default_language,
             heartbeat=timedelta(seconds=10),
+            recording=self.recording,
         )
 
     # ------------------------------------------------------------- helpers
@@ -125,6 +129,16 @@ class World:
     def queue_recording(self, name: str, content: str) -> None:
         self.drop(name, content)
         self.settle_inbox()
+
+    def send_audio(self, name: str, content: str, skip: int = 0) -> None:
+        """Send the next piece of a recording, as the web page does."""
+        job = self.job(name)
+        self.last_piece = (job.size_bytes + skip, content.encode())
+        self.send_again(name)
+
+    def send_again(self, name: str) -> None:
+        offset, piece = self.last_piece
+        self.service.add_audio(self.job(name).id, offset, io.BytesIO(piece))
 
     def work(self, limit: int = 50) -> None:
         for _ in range(limit):

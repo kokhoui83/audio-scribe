@@ -22,6 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from scribe.domain.draft import Draft
 from scribe.domain.job import Job, JobOptions, JobStatus
 from scribe.domain.transcript import Transcript
 from scribe.domain.worker import WorkerState
@@ -56,6 +57,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at   timestamptz,
     transcript    jsonb
 );
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_complete boolean NOT NULL DEFAULT true;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_at timestamptz;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS draft jsonb;
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (created_at, id) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS jobs_newest ON jobs (created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS jobs_leases ON jobs (heartbeat_at) WHERE status = 'processing';
@@ -71,14 +75,15 @@ CREATE TABLE IF NOT EXISTS workers (
 );
 """
 
-# Every job column except the (large) transcript, in Job field order.
+# Every job column except the (large) transcript and draft.
 _COLUMNS = (
     "id", "filename", "source", "stored_path", "size_bytes", "created_at", "run_after", "rel_dir",
     "options", "max_attempts", "status", "stage", "progress", "attempts", "locked_by", "heartbeat_at",
     "error", "speaker_names", "outputs", "duration_s", "language", "num_speakers", "started_at",
-    "finished_at",
+    "finished_at", "audio_complete", "audio_at",
 )  # fmt: skip
 _SELECT = ", ".join(_COLUMNS)
+_TEXTS = ", transcript, draft"
 _MIGRATION_LOCK = 727001
 
 
@@ -141,8 +146,12 @@ def _job_from_row(row: dict[str, Any]) -> Job:
     data = {c: row[c] for c in _COLUMNS}
     data["options"] = JobOptions.from_dict(data["options"])
     data["status"] = JobStatus(data["status"])
-    transcript = row.get("transcript")
-    return Job(**data, transcript=None if transcript is None else Transcript.from_dict(transcript))
+    transcript, draft = row.get("transcript"), row.get("draft")
+    return Job(
+        **data,
+        transcript=None if transcript is None else Transcript.from_dict(transcript),
+        draft=None if draft is None else Draft.from_dict(draft),
+    )
 
 
 def _job_to_params(job: Job) -> dict[str, Any]:
@@ -163,7 +172,7 @@ class PostgresJobRepository:
         self._db.execute(f"INSERT INTO jobs ({_SELECT}) VALUES ({placeholders})", _job_to_params(job))
 
     def get(self, job_id: str, with_transcript: bool = False) -> Job | None:
-        columns = _SELECT + (", transcript" if with_transcript else "")
+        columns = _SELECT + (_TEXTS if with_transcript else "")
         row = self._db.one(f"SELECT {columns} FROM jobs WHERE id = %s", (job_id,))
         return None if row is None else _job_from_row(row)
 
@@ -230,6 +239,9 @@ class PostgresJobRepository:
         if job.transcript is not None:
             assignments += ", transcript = %(transcript)s"
             params["transcript"] = Jsonb(job.transcript.to_dict())
+        if job.draft is not None:
+            assignments += ", draft = %(draft)s"
+            params["draft"] = Jsonb(job.draft.to_dict())
         conn.execute(f"UPDATE jobs SET {assignments} WHERE id = %(id)s", params)
 
 

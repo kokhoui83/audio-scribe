@@ -10,7 +10,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scribe.domain.job import InvalidTransition, Job, JobOptions, JobStatus, RetryPolicy
+from scribe.domain.draft import Draft
+from scribe.domain.job import RECORDING, InvalidTransition, Job, JobOptions, JobStatus, RetryPolicy
 from scribe.domain.transcript import SpeakerTurn, Word, build_transcript
 from scribe.domain.worker import READY, WorkerState
 
@@ -235,6 +236,50 @@ class TestUpdating:
         )
         jobs.update(job.id, lambda j: j.rename_speakers({"Speaker 1": "Al"}))
         assert jobs.get(job.id, with_transcript=True).transcript == transcript()
+
+
+class TestRecordings:
+    DRAFT = Draft(position=4.2, language="en", words=(Word(0.0, 1.0, " Hi", segment=3, probability=0.9),))
+
+    def recording(self, jobs) -> Job:
+        job = make_job(1, source=RECORDING, size_bytes=0, audio_complete=False)
+        jobs.add(job)
+        return job
+
+    def test_a_recording_is_returned_exactly_as_it_was_added(self, jobs):
+        job = self.recording(jobs)
+        stored = jobs.get(job.id)
+        assert stored == job and not stored.audio_complete and stored.audio_at == job.created_at
+
+    def test_arriving_audio_is_saved(self, jobs):
+        job = self.recording(jobs)
+        later = T0 + timedelta(minutes=1)
+        jobs.update(job.id, lambda j: j.receive_audio(later, size_bytes=512))
+        stored = jobs.get(job.id)
+        assert (stored.size_bytes, stored.audio_at) == (512, later)
+
+    def test_the_text_so_far_is_saved_and_only_loaded_on_request(self, jobs):
+        job = self.recording(jobs)
+        jobs.claim_next("w1", T0 + timedelta(minutes=1))
+        jobs.update(job.id, lambda j: j.checkpoint("w1", self.DRAFT, duration_s=9.0))
+        assert jobs.get(job.id).draft is None and jobs.list()[0].draft is None
+        stored = jobs.get(job.id, with_transcript=True)
+        assert stored.draft == self.DRAFT and stored.draft.words[0].segment == 3
+        assert stored.duration_s == 9.0
+
+    def test_an_update_that_does_not_touch_the_text_so_far_keeps_it(self, jobs):
+        job = self.recording(jobs)
+        now = T0 + timedelta(minutes=1)
+        jobs.claim_next("w1", now)
+        jobs.update(job.id, lambda j: j.checkpoint("w1", self.DRAFT, duration_s=9.0))
+        jobs.update(job.id, lambda j: j.pause("w1", now, resume_at=now + timedelta(seconds=30)))
+        assert jobs.get(job.id, with_transcript=True).draft == self.DRAFT
+        assert jobs.claim_next("w1", now + timedelta(seconds=29)) is None
+        assert jobs.claim_next("w1", now + timedelta(seconds=30)).attempts == 1
+
+    def test_a_job_without_text_so_far_has_none(self, jobs):
+        jobs.add(make_job(1))
+        assert jobs.get(make_job(1).id, with_transcript=True).draft is None
 
 
 class TestStaleJobs:

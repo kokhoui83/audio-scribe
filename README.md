@@ -9,6 +9,8 @@ when. Runs entirely on your own machine with Docker Compose.
 - **Any common format**: mp3, wav, m4a, flac, ogg, opus, aac, wma, … and the
   audio track of mp4, mkv, mov, webm.
 - **Folder watching**, plus a web page and an HTTP API for uploads.
+- **Live recording** in the web page: speech is transcribed while you record,
+  so less is left to do when the meeting ends.
 - **Durable job queue** (PostgreSQL): automatic retries, recovery from worker
   crashes, nothing lost on restart.
 - **Output** as Markdown (default), plain text, JSON with word timings, SRT
@@ -54,9 +56,11 @@ Other GPUs: [AMD and Intel through Vulkan](docs/how-to/vulkan.md),
 | [GPU](docs/how-to/gpu.md) | Running on an NVIDIA GPU |
 | [Vulkan](docs/how-to/vulkan.md) | Running on an AMD or Intel GPU |
 | [Metal](docs/how-to/metal.md) | Running on a Mac GPU |
+| [Recording](docs/how-to/recording.md) | Recording a meeting in the web page |
 | [HTTP API](docs/how-to/api.md) | Endpoints with examples |
 | [Operations](docs/how-to/operations.md) | Monitoring, scaling, backup, troubleshooting |
 | [Development](docs/how-to/development.md) | Running tests, the TDD workflow, extending the system |
+| [AGENTS.md](AGENTS.md) | The rules for changing this repository, for people and coding agents |
 
 ## Tests
 

@@ -28,10 +28,12 @@ class JobRepository(Protocol):
 
     def add(self, job: Job) -> None: ...
 
-    def get(self, job_id: str, with_transcript: bool = False) -> Job | None: ...
+    def get(self, job_id: str, with_transcript: bool = False) -> Job | None:
+        """``with_transcript`` also loads the draft of a recording."""
+        ...
 
     def list(self, status: JobStatus | None = None, limit: int = 100, offset: int = 0) -> list[Job]:
-        """Newest first, without transcripts."""
+        """Newest first, without transcripts and drafts."""
         ...
 
     def ids(self) -> set[str]: ...
@@ -73,6 +75,14 @@ class InboxFile:
     modified: float
 
 
+class OutOfSequence(Exception):
+    """A piece of a recording does not follow on what is stored."""
+
+    def __init__(self, expected: int) -> None:
+        super().__init__(f"audio is missing before this piece; the next piece must start at byte {expected}")
+        self.expected = expected
+
+
 class FileStore(Protocol):
     """The data folder: inbox, staging area, outputs, archive, failed."""
 
@@ -86,6 +96,12 @@ class FileStore(Protocol):
 
     def stage_upload(self, job_id: str, filename: str, content: BinaryIO) -> tuple[str, int]:
         """Save an upload; returns (stored path, size in bytes)."""
+        ...
+
+    def append_audio(self, stored_path: str, offset: int, content: BinaryIO) -> int:
+        """Store a piece of a recording at ``offset`` bytes; returns the new
+        size. Storing the same piece again changes nothing. Raises
+        OutOfSequence if audio before ``offset`` is missing."""
         ...
 
     def local_path(self, stored_path: str) -> Path: ...
@@ -135,8 +151,10 @@ class Recognition:
 
 
 class AudioDecoder(Protocol):
-    def decode(self, path: Path) -> Audio:
-        """Raises UnreadableAudio."""
+    def decode(self, path: Path, start: float = 0.0) -> Audio:
+        """The audio from ``start`` seconds on; empty if the file is shorter
+        than that. A file that is still being written is decoded as far as
+        it goes. Raises UnreadableAudio."""
         ...
 
 

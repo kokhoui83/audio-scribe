@@ -5,7 +5,7 @@ speaker turns the way real models would."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -40,7 +40,24 @@ class FakeAudio:
 
 
 class FakeDecoder:
-    def decode(self, path: Path) -> FakeAudio:
+    def decode(self, path: Path, start: float = 0.0) -> FakeAudio:
+        whole = self._whole(path)
+        if start <= 0:
+            return whole
+        # As a real decoder does: times count from ``start``.
+        utterances = [
+            (
+                max(begin - start, 0.0),
+                end - start,
+                voice,
+                [replace(w, start=w.start - start, end=w.end - start) for w in words if w.start >= start],
+            )
+            for begin, end, voice, words in whole.utterances
+            if end > start
+        ]
+        return FakeAudio(utterances, duration=max(whole.duration - start, 0.0))
+
+    def _whole(self, path: Path) -> FakeAudio:
         content = path.read_text(encoding="utf-8")
         if content.startswith(NOT_AUDIO):
             raise UnreadableAudio(f"{path.name} does not contain audio")

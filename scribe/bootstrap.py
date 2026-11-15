@@ -17,7 +17,7 @@ from scribe.application.maintenance import Housekeeper
 from scribe.application.management import JobService
 from scribe.application.processing import Engines
 from scribe.application.worker import Worker
-from scribe.domain.job import RetryPolicy
+from scribe.domain.job import RecordingPolicy, RetryPolicy
 from scribe.settings import Settings
 
 # A worker that has not reported for this long is shown as not running.
@@ -130,4 +130,7 @@ def worker() -> Worker:
         output_formats=s.output_formats,
         default_language=s.default_language,
         heartbeat=timedelta(seconds=s.heartbeat_seconds),
+        recording=RecordingPolicy(
+            pass_seconds=s.recording_pass_seconds, idle_seconds=s.recording_idle_seconds
+        ),
     )

@@ -12,9 +12,31 @@
 Tests run in the `test` image (no speech models, about 1 GB). Source and tests
 are mounted, so no rebuild is needed after editing.
 
+`./t.sh` stops the PostgreSQL container when it ends. If you run
+`docker compose -f compose.test.yaml run --rm --build test` yourself (needed
+after changing `requirements/*.txt` or the `Dockerfile`), the database keeps
+running; remove it with `docker compose -f compose.test.yaml down`.
+
 Without Docker: `pip install -r requirements/base.txt -r requirements/dev.txt`
 and `pytest`; the PostgreSQL contract tests are skipped unless
 `TEST_DATABASE_URL` is set, the ffmpeg tests unless ffmpeg is installed.
+
+The rules in short, for people and coding agents alike, are in
+[AGENTS.md](../../AGENTS.md).
+
+## Continuous integration and releases
+
+Two GitHub Actions workflows live in `.github/workflows/`:
+
+| Workflow | When | What |
+| --- | --- | --- |
+| `ci.yml` | every pull request, every push to `main` | Builds the `test` image (cached) and runs `docker compose -f compose.test.yaml run --rm test`: the same format check, lint and tests as `./t.sh`. |
+| `release.yml` | a pushed tag `v*` | Runs `ci.yml`, then pushes the `api` and the CPU `worker` images to `ghcr.io/<owner>/audio-scribe-api` and `-worker`, tagged `1.2.3`, `1.2` and `latest`. |
+
+To release: `git tag v1.2.0 && git push origin v1.2.0`. The GPU and Vulkan
+workers are not published; build them with the compose override files.
+Making `ci` a required status check for `main` is a repository setting
+(Settings, Branches), not part of the code.
 
 ## Workflow: specification first
 
@@ -37,6 +59,7 @@ and `pytest`; the PostgreSQL contract tests are skipped unless
 | Use another speech-to-text engine | A new adapter implementing `SpeechRecognizer`; wire it in `bootstrap.load_engines`. |
 | Use another diarizer | A new adapter implementing `Diarizer`; same place. |
 | Store jobs elsewhere | A new `JobRepository`; add it to the `stores` fixture in `tests/contract/test_job_repository.py` so it must pass the same contract. |
+| Change how a recording in progress is cut into pieces | `Draft.extended` in `domain/draft.py`; `tests/unit/test_draft.py` and `recording.feature`. |
 | Add an API endpoint | A method on `JobService` (with a scenario), then a route in `entrypoints/api.py` and a test in `tests/integration/test_api.py`. |
 
 ## Conventions
