@@ -63,7 +63,8 @@ COPY --from=whispercpp /build/bin/whisper-cli /usr/local/bin/whisper-cli
 FROM base AS test
 COPY requirements/dev.txt requirements/dev.txt
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements/dev.txt
-COPY pyproject.toml .
+COPY pyproject.toml .env.example ./
 COPY scribe scribe
+COPY scripts scripts
 COPY tests tests
 CMD ["sh", "-c", "ruff format --check -q . && ruff check -q . && pytest"]

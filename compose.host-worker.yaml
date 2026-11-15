@@ -1,5 +1,6 @@
 # The worker runs directly on the host instead of in Docker, which is the
 # only way to use the GPU of a Mac (Metal). Everything else stays in Docker.
+#   ./scripts/mac.sh up        on a Mac: both steps below with one command
 #   docker compose -f compose.yaml -f compose.host-worker.yaml up -d
 #   ./scripts/host-worker.sh
 # See docs/how-to/metal.md.

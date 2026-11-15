@@ -28,6 +28,9 @@ No account? Set `DIARIZE=false`; transcripts then have no speaker labels.
 docker compose up -d --build
 ```
 
+On a Mac this works too, but on the CPU only; to use the Mac's GPU, start
+with `./scripts/mac.sh up` instead, as described in [Metal](metal.md).
+
 The first build downloads PyTorch (several minutes). On first start the worker
 downloads the Whisper model (about 1.6 GB for the default `large-v3-turbo`)
 and the speaker model. Follow along with:
