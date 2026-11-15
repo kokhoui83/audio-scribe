@@ -19,6 +19,20 @@ and `pytest`; the PostgreSQL contract tests are skipped unless
 The rules in short, for people and coding agents alike, are in
 [AGENTS.md](../../AGENTS.md).
 
+## Continuous integration and releases
+
+Two GitHub Actions workflows live in `.github/workflows/`:
+
+| Workflow | When | What |
+| --- | --- | --- |
+| `ci.yml` | every pull request, every push to `main` | Builds the `test` image (cached) and runs `docker compose -f compose.test.yaml run --rm test`: the same format check, lint and tests as `./t.sh`. |
+| `release.yml` | a pushed tag `v*` | Runs `ci.yml`, then pushes the `api` and the CPU `worker` images to `ghcr.io/<owner>/audio-scribe-api` and `-worker`, tagged `1.2.3`, `1.2` and `latest`. |
+
+To release: `git tag v1.2.0 && git push origin v1.2.0`. The GPU and Vulkan
+workers are not published; build them with the compose override files.
+Making `ci` a required status check for `main` is a repository setting
+(Settings, Branches), not part of the code.
+
 ## Workflow: specification first
 
 1. **Requirement** — add or change a line in `docs/requirements.md`.
