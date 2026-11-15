@@ -12,6 +12,11 @@
 Tests run in the `test` image (no speech models, about 1 GB). Source and tests
 are mounted, so no rebuild is needed after editing.
 
+`./t.sh` stops the PostgreSQL container when it ends. If you run
+`docker compose -f compose.test.yaml run --rm --build test` yourself (needed
+after changing `requirements/*.txt` or the `Dockerfile`), the database keeps
+running; remove it with `docker compose -f compose.test.yaml down`.
+
 Without Docker: `pip install -r requirements/base.txt -r requirements/dev.txt`
 and `pytest`; the PostgreSQL contract tests are skipped unless
 `TEST_DATABASE_URL` is set, the ffmpeg tests unless ffmpeg is installed.
