@@ -11,6 +11,7 @@ from scribe.application.management import EmptyUpload, OriginalMissing, Transcri
 from scribe.application.ports import OutOfSequence
 from scribe.domain.job import InvalidTransition, JobOptions
 from scribe.domain.worker import ERROR, READY
+from scribe.entrypoints.api import job_view
 from tests.fakes import NOT_AUDIO, recording
 
 scenarios(
@@ -268,6 +269,24 @@ def _(world, name, text):
 @then("the request is refused because audio is missing before it")
 def _(world):
     assert isinstance(world.refusal, OutOfSequence)
+
+
+@when(parsers.parse('the recording "{name}" is finished just as a worker looks at it'))
+def _(world, name):
+    # The worker gets in between the end of the recording and its removal.
+    delete = world.jobs.delete
+
+    def delete_after_a_pass(job_id):
+        world.work()
+        return delete(job_id)
+
+    world.jobs.delete = delete_after_a_pass
+    world.attempt(lambda: world.service.finish_recording(world.job(name).id))
+
+
+@then(parsers.parse('the job for "{name}" is no longer live'))
+def _(world, name):
+    assert job_view(world.job(name))["recording"] is False
 
 
 @then("the request is refused because the recording is closed")

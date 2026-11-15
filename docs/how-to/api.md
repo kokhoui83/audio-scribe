@@ -80,7 +80,8 @@ curl -X POST localhost:8090/api/recordings/$id/finish
 - `POST /api/recordings` takes the same optional fields as an upload, plus
   `filename` (its extension is only used for naming).
 - While the recording runs, the job has `"recording": true` and its
-  `duration_s` is the length heard so far. Without `finish`, the recording
+  `duration_s` is the length heard so far. A recording that failed or was
+  cancelled is `"recording": false`: it accepts no more audio. Without `finish`, the recording
   is ended after `RECORDING_IDLE_SECONDS` without audio.
 
 ## All endpoints

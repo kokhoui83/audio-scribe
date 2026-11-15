@@ -199,6 +199,23 @@ Feature: Live recording
     And no job exists
     And no staged files remain
 
+  @FR-58
+  Scenario: A recording without any audio leaves no transcript behind, even if a worker looks at it meanwhile
+    Given a recording "standup.webm" is started
+    When the recording "standup.webm" is finished just as a worker looks at it
+    Then the request is refused because nothing was recorded
+    And no job exists
+    And no staged files remain
+    And the output folder is empty
+    And the archive folder is empty
+    And the failed folder is empty
+
+  @FR-58
+  Scenario: A cancelled recording is no longer shown as recording
+    Given a recording "standup.webm" is started
+    When the job for "standup.webm" is cancelled
+    Then the job for "standup.webm" is no longer live
+
   @FR-53 @FR-40
   Scenario: A finished recording can be run again from its archived audio
     Given a recording "standup.webm" is started

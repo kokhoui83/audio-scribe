@@ -53,7 +53,7 @@ def job_view(job: Job) -> dict[str, Any]:
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
-        "recording": not job.audio_complete,
+        "recording": job.is_live,
     }
 
 

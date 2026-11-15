@@ -81,6 +81,22 @@ class TestContinuing:
         assert heard(Draft(), [], seconds=1.0, language=None).language is None
 
 
+class TestPrecision:
+    # The decoder is told where to start in whole milliseconds. A position
+    # between two of them would make the audio and the draft drift apart a
+    # little more with every pass.
+    def test_the_position_is_a_whole_number_of_milliseconds_and_never_inside_the_margin(self):
+        first = heard(Draft(), words((0.0, 1.0, " Hi.", 0)), 12.3456789)
+        assert first.position == 7.345  # 12.3456789 - 5.0, rounded down
+
+    def test_the_rounding_does_not_add_up_over_passes(self):
+        draft = Draft()
+        for _ in range(10):
+            draft = heard(draft, words((0.0, 1.0, " Ok.", 0)), 11.1111111)
+        assert draft.position == round(draft.position, 3)
+        assert draft.position == pytest.approx(10 * 6.1111111, abs=0.01)
+
+
 class TestFinishing:
     def test_at_the_end_of_the_recording_every_word_is_kept(self):
         draft = heard(Draft(), TWO_SENTENCES, seconds=5.5, final=True)

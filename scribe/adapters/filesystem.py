@@ -79,7 +79,14 @@ class LocalFileStore:
         # a piece that is sent twice harmless.
         with open(path, "r+b") as out:
             out.seek(offset)
-            shutil.copyfileobj(content, out)
+            try:
+                shutil.copyfileobj(content, out)
+            except BaseException:
+                # A transfer that breaks off must not leave a stub beyond what
+                # the job knows of, or the file and the job would disagree
+                # about where the next piece belongs.
+                out.truncate(size)
+                raise
             return max(size, out.tell())
 
     def recover_orphans(self, known_job_ids: set[str]) -> list[str]:

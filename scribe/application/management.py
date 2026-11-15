@@ -76,44 +76,38 @@ class JobService:
         self._database_ok = database_ok
 
     def submit_upload(self, filename: str, content: BinaryIO, options: JobOptions | None = None) -> Job:
+        return self._queue(filename, content, source="upload", options=options)
+
+    def start_recording(self, filename: str, options: JobOptions | None = None) -> Job:
+        """A job for audio that is still to arrive, piece by piece. It is
+        queued at once, so that it is transcribed while it is recorded."""
+        return self._queue(filename, io.BytesIO(), source=RECORDING, options=options, audio_complete=False)
+
+    def _queue(
+        self,
+        filename: str,
+        content: BinaryIO,
+        *,
+        source: str,
+        options: JobOptions | None,
+        audio_complete: bool = True,
+    ) -> Job:
         job_id = self._new_id()
         stored_path, size = self._files.stage_upload(job_id, filename, content)
         job = Job.submit(
             job_id=job_id,
             filename=stored_path.rsplit("/", 1)[-1],
-            source="upload",
+            source=source,
             stored_path=stored_path,
             size_bytes=size,
             now=self._clock.now(),
             options=options,
             max_attempts=self._max_attempts,
+            audio_complete=audio_complete,
         )
         try:
-            if size == 0:
+            if size == 0 and audio_complete:
                 raise EmptyUpload("the uploaded file is empty")
-            self._jobs.add(job)
-        except Exception:
-            self._files.discard(job)
-            raise
-        return job
-
-    def start_recording(self, filename: str, options: JobOptions | None = None) -> Job:
-        """A job for audio that is still to arrive, piece by piece. It is
-        queued at once, so that it is transcribed while it is recorded."""
-        job_id = self._new_id()
-        stored_path, _ = self._files.stage_upload(job_id, filename, io.BytesIO())
-        job = Job.submit(
-            job_id=job_id,
-            filename=stored_path.rsplit("/", 1)[-1],
-            source=RECORDING,
-            stored_path=stored_path,
-            size_bytes=0,
-            now=self._clock.now(),
-            options=options,
-            max_attempts=self._max_attempts,
-            audio_complete=False,
-        )
-        try:
             self._jobs.add(job)
         except Exception:
             self._files.discard(job)
@@ -134,11 +128,19 @@ class JobService:
 
     def finish_recording(self, job_id: str) -> Job:
         """No more audio will come. A recording without any audio is dropped."""
-        job = self._found(self._jobs.update(job_id, lambda j: j.finish_recording(self._clock.now())))
-        if job.size_bytes == 0:
+
+        def end(job: Job) -> None:
+            job.finish_recording(self._clock.now())
+            # Decided under the job's lock, before the end is saved: once saved,
+            # a worker could pick the job up and leave a transcript of nothing.
+            if job.size_bytes == 0:
+                raise EmptyUpload("nothing was recorded")
+
+        try:
+            return self._found(self._jobs.update(job_id, end))
+        except EmptyUpload:
             self.delete(job_id)
-            raise EmptyUpload("nothing was recorded")
-        return job
+            raise
 
     def text_so_far(self, job_id: str) -> TextSoFar:
         job = self._found(self._jobs.get(job_id, with_transcript=True))

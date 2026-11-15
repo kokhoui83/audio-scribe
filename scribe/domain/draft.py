@@ -8,6 +8,7 @@ they are recognised again in the next pass, when more audio has arrived.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -53,7 +54,7 @@ class Draft:
             )
             for w in heard[:kept]
         )
-        return Draft(self.position + cut, self.language or language, self.words + new)
+        return Draft(_milliseconds(self.position + cut), self.language or language, self.words + new)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,3 +113,10 @@ def _last_end(heard: Sequence[Word], limit: float, *, sentences_only: bool) -> i
         ):
             return index
     return None
+
+
+def _milliseconds(seconds: float) -> float:
+    """Rounded down to a whole millisecond, which is how the decoder is told
+    where to start (and 16 whole samples), so that the audio it returns begins
+    exactly where the draft ends. Down, so the cut never enters the margin."""
+    return math.floor(seconds * 1000 + 1e-6) / 1000

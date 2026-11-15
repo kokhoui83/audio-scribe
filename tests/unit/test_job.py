@@ -225,6 +225,19 @@ class TestRecording:
         job.receive_audio(T0, size_bytes=1)
         assert job.size_bytes == 1
 
+    def test_a_recording_is_live_only_while_it_can_still_receive_audio(self):
+        job = new_recording()
+        assert job.is_live
+        job.start("w1", T0)
+        assert job.is_live
+        job.fail("w1", T0, "boom", retryable=False, policy=RetryPolicy(max_attempts=1))
+        assert not job.is_live
+
+    def test_a_cancelled_recording_is_not_live(self):
+        job = new_recording()
+        job.cancel(T0)
+        assert not job.is_live
+
     @pytest.mark.parametrize("close", [lambda j: j.cancel(T0), lambda j: j.finish_recording(T0)])
     def test_a_closed_recording_accepts_no_more_audio(self, close):
         job = new_recording()

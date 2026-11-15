@@ -96,6 +96,20 @@ class TestAppendingAudio:
         assert store.append_audio(stored, 3, io.BytesIO(b"def")) == 6
         assert store.local_path(stored).read_bytes() == b"abcdef"
 
+    def test_a_piece_whose_transfer_breaks_off_leaves_the_file_as_it_was(self, store, stored):
+        class BreaksOff(io.BytesIO):
+            def read(self, size=-1):
+                data = super().read(2)
+                if not data:
+                    raise ConnectionError("client went away")
+                return data
+
+        store.append_audio(stored, 0, io.BytesIO(b"abc"))
+        with pytest.raises(ConnectionError):
+            store.append_audio(stored, 3, BreaksOff(b"defgh"))
+        # The next piece is expected where the stored audio ends, as the job says.
+        assert store.local_path(stored).read_bytes() == b"abc"
+
     def test_a_piece_that_would_leave_a_gap_is_refused(self, store, stored):
         store.append_audio(stored, 0, io.BytesIO(b"abc"))
         with pytest.raises(OutOfSequence) as refusal:

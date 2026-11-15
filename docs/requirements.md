@@ -53,7 +53,7 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 | FR-55 | Each piece of audio is stored exactly once and in order: a piece that is sent twice changes nothing, a piece that would leave a gap is refused. |
 | FR-56 | A recording that receives no audio for a configurable time (a closed browser, a lost connection) is ended automatically and transcribed with what arrived. |
 | FR-57 | A recording in progress does not occupy a worker: other jobs are processed in between. What has been transcribed survives a restart or crash of the worker. |
-| FR-58 | A recording that has ended or was cancelled accepts no more audio; one that ends without any audio leaves no job behind. |
+| FR-58 | A recording that has ended or was cancelled accepts no more audio; one that ends without any audio leaves no job, transcript or file behind; it is not reported as recording once it has failed or been cancelled. |
 
 ### Output
 

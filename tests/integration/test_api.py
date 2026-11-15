@@ -289,6 +289,13 @@ class TestRecording:
     def test_a_negative_offset_is_rejected(self, api):
         assert self.send(api, self.start(api), self.FIRST, -1).status_code == 422
 
+    def test_a_cancelled_recording_is_no_longer_reported_as_recording(self, api):
+        job = self.start(api)
+        assert api.http.get(f"/api/jobs/{job['id']}").json()["recording"] is True
+        cancelled = api.http.post(f"/api/jobs/{job['id']}/cancel").json()
+        assert (cancelled["status"], cancelled["recording"]) == ("cancelled", False)
+        assert api.http.get(f"/api/jobs/{job['id']}").json()["recording"] is False
+
     def test_an_unknown_recording_is_404(self, api):
         missing = {"id": MISSING.rsplit("/", 1)[1]}
         assert self.send(api, missing, self.FIRST, 0).status_code == 404

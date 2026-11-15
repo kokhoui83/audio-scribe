@@ -150,6 +150,12 @@ class Job:
         """Recorded live, whether or not the recording is still going on."""
         return self.source == RECORDING
 
+    @property
+    def is_live(self) -> bool:
+        """A recording that is still going on: more audio may arrive. One that
+        failed or was cancelled before it ended is not."""
+        return not self.audio_complete and self.status in (JobStatus.QUEUED, JobStatus.PROCESSING)
+
     def audio_stalled(self, now: datetime, idle: timedelta) -> bool:
         """More audio is expected, but none has arrived for too long."""
         return not self.audio_complete and self.audio_at is not None and now - self.audio_at > idle
