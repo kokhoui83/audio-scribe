@@ -27,20 +27,29 @@ fail() {
   exit 1
 }
 
+# Whether the given Python is recent enough for this code.
+is_current() {
+  "$1" -c 'import sys; sys.exit(sys.version_info < (3, 14))' 2>/dev/null
+}
+
 setup() {
   command -v ffmpeg >/dev/null || fail "ffmpeg not found (macOS: brew install ffmpeg)"
   command -v "$WHISPER_CPP_BIN" >/dev/null \
     || fail "$WHISPER_CPP_BIN not found (macOS: brew install whisper-cpp), or set WHISPER_CPP_BIN"
+  if [ -x "$VENV/bin/python" ] && ! is_current "$VENV/bin/python"; then
+    echo "host-worker: $VENV was made with a Python older than 3.14; building it again"
+    rm -rf "$VENV"
+  fi
   if [ ! -x "$VENV/bin/python" ]; then
     echo "host-worker: creating $VENV and installing packages (once, takes a few minutes)"
   fi
   # With uv there is nothing else to install: it fetches Python as well.
   if command -v uv >/dev/null; then
-    [ -x "$VENV/bin/python" ] || uv venv --quiet --python 3.12 "$VENV"
+    [ -x "$VENV/bin/python" ] || uv venv --quiet --python 3.14 "$VENV"
     uv pip install --quiet --python "$VENV/bin/python" -r requirements/host-worker.txt
   else
-    "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null \
-      || fail "Python 3.12 or newer is needed. Install uv (macOS: brew install uv), which fetches it, or run with PYTHON=python3.12 $0"
+    is_current "$PYTHON" \
+      || fail "Python 3.14 or newer is needed. Install uv (macOS: brew install uv), which fetches it, or run with PYTHON=python3.14 $0"
     [ -x "$VENV/bin/python" ] || "$PYTHON" -m venv "$VENV"
     "$VENV/bin/pip" install --quiet --disable-pip-version-check -r requirements/host-worker.txt
   fi

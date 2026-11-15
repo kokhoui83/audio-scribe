@@ -31,7 +31,9 @@ UV = RECORD + (
     '  mkdir -p "$venv/bin" && cp "$SHELF/../worker" "$venv/bin/python"\n'
     "fi\n"
 )
-WORKER = RECORD + (
+# Asked for its version (`python -c ...`), it answers through the exit status.
+VERSION_CHECK = 'if [ "$1" = -c ]; then exit "${{PYTHON_IS_OLD:-0}}"; fi\n'
+WORKER = RECORD.replace("\n", "\n" + VERSION_CHECK, 1) + (
     'echo "environment device=$DEVICE database=$DATABASE_URL" >> "$CALLS"\n'
     'if [ -n "${{WORKER_FAILS:-}}" ]; then echo "no such model" >&2; exit 1; fi\n'
     "echo worker starting\n"
@@ -171,6 +173,17 @@ def test_up_creates_the_python_environment_with_uv_only_once(mac):
     mac.run("up")
 
     assert len([call for call in mac.calls("uv") if call.startswith("uv venv")]) == 1
+
+
+def test_up_rebuilds_a_python_environment_that_is_too_old(mac):
+    mac.run("up")
+    mac.run("down")
+
+    result = mac.run("up", PYTHON_IS_OLD="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "older than 3.14" in result.stdout
+    assert len([call for call in mac.calls("uv") if call.startswith("uv venv")]) == 2
 
 
 def test_up_twice_keeps_the_worker_that_is_running(mac):

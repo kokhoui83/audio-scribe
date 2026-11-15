@@ -71,7 +71,7 @@ Further rules:
 
 ## Code style
 
-- Python 3.12, `ruff format` and `ruff check` (line length 110), type hints
+- Python 3.14, `ruff format` and `ruff check` (line length 110), type hints
   on every function.
 - Names say what a thing is for; a module starts with a docstring that
   explains its role.

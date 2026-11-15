@@ -30,7 +30,7 @@ in it (`HF_TOKEN=hf_...`, see [Getting started](getting-started.md)) or set
 1. installs `ffmpeg`, `whisper-cpp` and `uv` with Homebrew (the
    [`Brewfile`](../../Brewfile)), if any of them is missing;
 2. creates the worker's Python environment in `.venv-worker` (`uv` fetches
-   Python 3.12 and the packages; once, a few minutes);
+   Python 3.14 and the packages; once, a few minutes);
 3. starts the database, the web page and the folder watcher in Docker;
 4. starts the worker in the background with `DEVICE=metal`.
 
@@ -46,7 +46,8 @@ cached in `./models`. You can close the terminal; the worker keeps running.
 | `./scripts/mac.sh status` | Says whether the worker runs and lists the containers. |
 | `./scripts/mac.sh logs` | Follows the worker's log, `.host-worker/worker.log`. The log of the previous run is kept as `worker.log.1`. |
 
-After changing `.env`, run `down` and then `up`.
+After changing `.env`, run `down` and then `up`. After an update that needs
+a newer Python, `up` builds `.venv-worker` again by itself.
 
 The worker is not started again by itself after a restart of the Mac or if
 it crashes: run `./scripts/mac.sh up`. The web page shows a banner while no
@@ -76,7 +77,7 @@ docker compose -f compose.yaml -f compose.host-worker.yaml up -d --build
 `compose.host-worker.yaml` leaves the Docker worker out and publishes the
 database on `127.0.0.1:5432` so the host worker can reach the queue.
 `scripts/host-worker.sh` needs `ffmpeg`, whisper.cpp and either `uv` or
-Python 3.12 (`PYTHON=python3.12 ./scripts/host-worker.sh`). It stays in the
+Python 3.14 (`PYTHON=python3.14 ./scripts/host-worker.sh`). It stays in the
 foreground; stop it with Ctrl-C.
 
 ## Troubleshooting
