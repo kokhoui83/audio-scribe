@@ -9,8 +9,8 @@
 ./t.sh tests/acceptance -k "crashed"     # by scenario name
 ```
 
-Tests run in the `test` image (no speech models, about 1 GB). Source and tests
-are mounted, so no rebuild is needed after editing.
+Tests run in the `test` image (no speech models, about 1 GB). Source, tests
+and `scripts/` are mounted, so no rebuild is needed after editing.
 
 `./t.sh` stops the PostgreSQL container when it ends. If you run
 `docker compose -f compose.test.yaml run --rm --build test` yourself (needed

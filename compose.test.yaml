@@ -17,11 +17,14 @@ services:
   test:
     build: { context: ., target: test }
     image: audio-scribe-test
+    init: true  # reaps the background worker that the scripts/mac.sh tests leave behind
     environment:
       TEST_DATABASE_URL: postgresql://scribe:scribe@testdb:5432/scribe_test
     volumes:
       - ./scribe:/app/scribe:ro
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
+      - ./.env.example:/app/.env.example:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
     depends_on:
       testdb: { condition: service_healthy }

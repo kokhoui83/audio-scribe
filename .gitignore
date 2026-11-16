@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 models
 .venv-worker
+.host-worker

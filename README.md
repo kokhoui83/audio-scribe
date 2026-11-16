@@ -41,8 +41,14 @@ With an NVIDIA GPU:
 docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
 ```
 
-Other GPUs: [AMD and Intel through Vulkan](docs/how-to/vulkan.md),
-[Apple through Metal](docs/how-to/metal.md).
+On a Mac, to use its GPU (needs Docker Desktop and Homebrew; see
+[Metal](docs/how-to/metal.md)):
+
+```sh
+./scripts/mac.sh up
+```
+
+Other GPUs: [AMD and Intel through Vulkan](docs/how-to/vulkan.md).
 
 ## Documentation
 

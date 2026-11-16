@@ -92,9 +92,10 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 
 | ID | Requirement |
 | --- | --- |
-| QR-01 | **Deployment:** the whole system starts with `docker compose up`; the only prerequisite is Docker (plus the NVIDIA Container Toolkit for CUDA). The one exception is Apple Metal, which containers cannot reach: there the worker runs on the host. |
+| QR-01 | **Deployment:** the whole system starts with `docker compose up`; the only prerequisite is Docker (plus the NVIDIA Container Toolkit for CUDA). The one exception is Apple Metal, which containers cannot reach: there the worker runs on the host (QR-09). |
 | QR-02 | **Hardware:** runs on CPU only by default; a GPU is enabled by configuration, without code changes: NVIDIA (CUDA) and AMD/Intel (Vulkan) with a compose override file, Apple (Metal) with a host worker. |
 | QR-08 | **No silent slow-down:** a worker configured for a GPU that it cannot use reports this and takes no jobs, rather than computing on the CPU. |
+| QR-09 | **One command on a Mac:** with Docker Desktop and Homebrew present, a single command installs whatever else the host worker needs, starts the containers and runs the worker in the background; a second command stops everything. |
 | QR-03 | **Privacy:** after the one-time model download the system works with no network access. |
 | QR-04 | **Security:** the web page and API are reachable from the local machine only, unless the operator opts in to exposing them. |
 | QR-05 | **Maintainability:** business rules do not depend on frameworks, the database or the speech models; these sit behind interfaces and can be replaced. |

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && pip install -r requirements/worker.txt
 # Let CTranslate2 find the CUDA libraries that ship inside the torch wheels
 # (the directories simply do not exist in the CPU build).
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib \
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.14/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.14/site-packages/nvidia/cudnn/lib \
     HF_HOME=/models/hf \
     HF_HUB_DISABLE_TELEMETRY=1 \
     PYANNOTE_METRICS_ENABLED=0
@@ -39,7 +39,7 @@ CMD ["python", "-m", "scribe.entrypoints.worker"]
 # ---- whisper.cpp built with Vulkan (only needed by worker-vulkan) -----------
 # Same Debian release as the worker, so the binary finds the libraries it was
 # linked against.
-FROM python:3.12-slim AS whispercpp
+FROM python:3.14-slim AS whispercpp
 ARG WHISPER_CPP_VERSION=v1.9.5
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git cmake make g++ libvulkan-dev glslc spirv-headers \
@@ -63,7 +63,8 @@ COPY --from=whispercpp /build/bin/whisper-cli /usr/local/bin/whisper-cli
 FROM base AS test
 COPY requirements/dev.txt requirements/dev.txt
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements/dev.txt
-COPY pyproject.toml .
+COPY pyproject.toml .env.example ./
 COPY scribe scribe
+COPY scripts scripts
 COPY tests tests
 CMD ["sh", "-c", "ruff format --check -q . && ruff check -q . && pytest"]
