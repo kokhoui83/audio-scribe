@@ -46,19 +46,24 @@ you had clicked **Stop**. If the browser shares no audio (you forgot to tick
 the box, or you use Firefox or Safari), the page says so instead of recording
 silence.
 
+Before the browser has been given microphone access it lists only the default
+input. Click **Show all inputs** to allow access and see the others, for
+example a loopback device. The browser keeps the microphone open while you
+choose; start recording or click **Done choosing** to release it.
+
 What the browser can share:
 
 | | Windows | macOS | Linux |
 | --- | --- | --- | --- |
 | Microphone and other input devices | Chrome, Edge, Firefox, Safari | same | same |
 | Audio of a tab | Chrome, Edge | Chrome, Edge | Chrome, Edge |
-| Audio of the entire screen | Chrome, Edge | no, use a loopback device | partly |
+| Audio of the entire screen | Chrome, Edge | Chrome 141 or later on macOS 14.2 or later; otherwise use a loopback device | partly |
 
 ### A loopback device
 
 A loopback device is a virtual sound card: an application plays into it and
 the page records from it as from a microphone. It is the way to capture a
-desktop app on a Mac, and it works with any browser.
+desktop app on a Mac without system-audio sharing, and it works with any browser.
 
 **macOS (BlackHole)**
 

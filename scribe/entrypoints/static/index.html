@@ -107,6 +107,7 @@
       <label id="source-mic-label">Microphone
         <select id="source-mic"><option value="">Default</option></select>
       </label>
+      <button type="button" id="source-mic-unlock" hidden>Show all inputs</button>
       <label id="source-with-mic-label" class="inline" hidden><input type="checkbox" id="source-with-mic" checked> Also record my microphone</label>
     </div>
     <div id="so-far" class="so-far" hidden></div>
@@ -308,6 +309,20 @@ function showSourceChoices() {
   $("source-with-mic-label").hidden = !shared;
 }
 
+// Firefox withdraws the temporary microphone permission, and with it the input names, when the last
+// track stops. The stream therefore stays open while the user chooses, until the chosen input has
+// started or the user clicks "Done choosing".
+let listing = null;
+let askingPermission = false;  // the picker's permission prompt is open
+let starting = false;          // a recording is waiting for its source; the picker must not open the microphone then
+
+function releaseListing() {
+  if (!listing) return;
+  listing.getTracks().forEach((track) => track.stop());
+  listing = null;
+  $("source-mic-unlock").textContent = "Show all inputs";
+}
+
 async function listMicrophones() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
   const chosen = $("source-mic").value || remembered(SOURCE_KEY + ".mic");
@@ -318,6 +333,8 @@ async function listMicrophones() {
     options.push(el("option", { value: device.deviceId }, device.label || `Input ${index + 1}`));
   });
   $("source-mic").replaceChildren(...options);
+  // Browsers hide non-default inputs and their names until microphone access has been given once.
+  $("source-mic-unlock").hidden = !listing && (devices.length === 0 || devices.every((device) => device.label));
   if ([...$("source-mic").options].some((option) => option.value === chosen)) $("source-mic").value = chosen;
 }
 
@@ -326,6 +343,18 @@ function initSource() {
   else if (remembered(SOURCE_KEY) === "shared") $("source").value = "shared";
   $("source-with-mic").checked = remembered(SOURCE_KEY + ".with-mic") !== "no";
   $("source").onchange = () => { remember(SOURCE_KEY, $("source").value); showSourceChoices(); };
+  $("source-mic-unlock").onclick = async () => {
+    if (listing) { releaseListing(); listMicrophones().catch(() => {}); return; }
+    if (starting || askingPermission) return;
+    const button = $("source-mic-unlock");
+    button.disabled = askingPermission = true;  // a second click during the prompt would open a second stream
+    try { listing = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (error) { alert(`The inputs cannot be listed without access to the microphone (${error.message}).`); return; }
+    finally { button.disabled = askingPermission = false; }
+    $("source-mic-unlock").textContent = "Done choosing";
+    try { await listMicrophones(); } catch (_) {}
+  };
+  addEventListener("pagehide", releaseListing);
   $("source-mic").onchange = () => remember(SOURCE_KEY + ".mic", $("source-mic").value);
   $("source-with-mic").onchange = () => {
     remember(SOURCE_KEY + ".with-mic", $("source-with-mic").checked ? "yes" : "no");
@@ -340,9 +369,11 @@ function initSource() {
 
 async function microphoneStream() {
   const deviceId = $("source-mic").value;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true });
-  listMicrophones().catch(() => {});  // names are only known once access has been given
-  return stream;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true });
+    await listMicrophones().catch(() => {});  // names are only known once access has been given
+    return stream;
+  } finally { releaseListing(); }
 }
 
 // Returns the stream to record and what must be released when it ends.
@@ -352,20 +383,27 @@ async function sourceStream() {
   try { shared = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); }
   catch (error) { throw new Error(`Sharing was not started (${error.message}).`); }
   shared.getVideoTracks().forEach((track) => track.stop());
+  // Registered at once: the share can end while microphone access or the job is still pending.
+  const sharing = { ended: false, onEnded: () => {} };
+  shared.getAudioTracks().forEach((track) => { track.onended = () => { sharing.ended = true; sharing.onEnded(); }; });
   if (!shared.getAudioTracks().length) {
     shared.getTracks().forEach((track) => track.stop());
     throw new Error("The shared screen or tab has no audio. Choose a browser tab, or on Windows the entire screen, and tick "
                     + "\"Share audio\". Chrome and Edge can do this; Firefox and Safari cannot. See docs/how-to/recording.md for other ways.");
   }
-  if (!$("source-with-mic").checked) return { stream: new MediaStream(shared.getAudioTracks()), release: [shared], shared };
+  if (!$("source-with-mic").checked) return { stream: new MediaStream(shared.getAudioTracks()), release: [shared], sharing };
   let microphone;
   try { microphone = await microphoneStream(); }
   catch (error) { shared.getTracks().forEach((track) => track.stop()); throw error; }
+  if (sharing.ended) {
+    microphone.getTracks().forEach((track) => track.stop());
+    throw new Error("Sharing ended before the recording started.");
+  }
   const context = new AudioContext();
   const mixed = context.createMediaStreamDestination();
   context.createMediaStreamSource(new MediaStream(shared.getAudioTracks())).connect(mixed);
   context.createMediaStreamSource(microphone).connect(mixed);
-  return { stream: mixed.stream, release: [shared, microphone], context, shared };
+  return { stream: mixed.stream, release: [shared, microphone], context, sharing };
 }
 
 async function startRecording() {
@@ -373,9 +411,13 @@ async function startRecording() {
     alert("This browser cannot record here. Audio capture needs http://localhost or HTTPS.");
     return;
   }
+  if (askingPermission) { recordNote("Answer the microphone question for the input list first."); return; }
+  if (starting) return;
+  starting = true;
   let source;
   try { source = await sourceStream(); }
   catch (error) { alert(`The audio cannot be recorded: ${error.message}`); return; }
+  finally { starting = false; releaseListing(); }  // also when only the shared audio is recorded, which never opens the microphone
   const stream = source.stream;
   const releaseSource = () => {
     [stream, ...source.release].forEach((each) => each.getTracks().forEach((track) => track.stop()));
@@ -393,6 +435,15 @@ async function startRecording() {
   let job;
   try { job = await (await api("/api/recordings", { method: "POST", body: form })).json(); }
   catch (error) { releaseSource(); alert(error.message); return; }
+  if (source.sharing && source.sharing.ended) {
+    releaseSource();
+    let left = "";
+    try { await api(`/api/jobs/${job.id}`, { method: "DELETE" }); }
+    catch (error) { left = ` The empty job "${job.filename}" could not be removed (${error.message}); delete it from the list below.`; }
+    alert(`The audio cannot be recorded: sharing ended before the recording started.${left}`);
+    refresh();
+    return;
+  }
 
   const media = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
   const current = { job, media, releaseSource, mime: media.mimeType || mime, pieces: [], sent: 0,
@@ -404,9 +455,8 @@ async function startRecording() {
   };
   media.onstop = () => finishRecording(current);
   // Stopping the share from the browser's own bar ends the recording like Stop does.
-  if (source.shared) source.shared.getAudioTracks().forEach((track) => {
-    track.onended = () => { if (media.state !== "inactive") media.stop(); };
-  });
+  if (source.sharing) source.sharing.onEnded = () => { if (media.state !== "inactive") media.stop(); };
+  releaseListing();  // the picker may have been opened while the job was being created
   media.start(PIECE_MS);
   recording = current;
   $("record").textContent = "Stop";
