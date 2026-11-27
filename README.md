@@ -62,7 +62,7 @@ Other GPUs: [AMD and Intel through Vulkan](docs/how-to/vulkan.md).
 | [GPU](docs/how-to/gpu.md) | Running on an NVIDIA GPU |
 | [Vulkan](docs/how-to/vulkan.md) | Running on an AMD or Intel GPU |
 | [Metal](docs/how-to/metal.md) | Running on a Mac GPU |
-| [Recording](docs/how-to/recording.md) | Recording a meeting in the web page |
+| [Recording](docs/how-to/recording.md) | Recording a meeting in the web page: microphone, shared tab or screen, loopback device, OBS |
 | [HTTP API](docs/how-to/api.md) | Endpoints with examples |
 | [Operations](docs/how-to/operations.md) | Monitoring, scaling, backup, troubleshooting |
 | [Development](docs/how-to/development.md) | Running tests, the TDD workflow, extending the system |

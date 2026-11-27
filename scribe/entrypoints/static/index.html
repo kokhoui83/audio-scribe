@@ -6,6 +6,7 @@
 <title>Audio Scribe</title>
 <style>
   :root {
+    color-scheme: light dark;
     --bg: #f6f7f9; --panel: #fff; --text: #1c2330; --muted: #667085; --line: #e3e6eb;
     --accent: #2f6fed; --ok: #17804d; --warn: #b26a00; --bad: #c0362c; --chip: #eef1f5;
   }
@@ -34,6 +35,9 @@
   label.inline { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
   input[type=text], input[type=number] { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
           border-radius: 6px; padding: 5px 8px; width: 130px; }
+  select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+          border-radius: 6px; padding: 5px 8px; max-width: 320px; }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   button, a.button { font: inherit; font-size: 13px; color: var(--text); background: var(--chip); border: 1px solid var(--line);
           border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-block; }
   button:hover, a.button:hover { border-color: var(--accent); }
@@ -64,6 +68,8 @@
   .turn p { margin: 2px 0 0; }
   .record { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
   .record button { font-size: 15px; padding: 7px 16px; }
+  .source { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
+  .source [hidden] { display: none; }
   button.stop { background: var(--bad); border-color: var(--bad); color: #fff; }
   .live { color: var(--bad); font-variant-numeric: tabular-nums; }
   .live .dot, .status-recording .dot { display: inline-block; margin-right: 6px; background: var(--bad);
@@ -89,7 +95,19 @@
     <div class="record">
       <button id="record" class="primary">Record</button>
       <span id="record-time" class="live" hidden><span class="dot"></span><span id="record-clock">00:00:00</span></span>
-      <span id="record-note" class="sub">Records the microphone. Transcription starts while you record; speakers are identified when you stop.</span>
+      <span id="record-note" class="sub">Transcription starts while you record; speakers are identified when you stop.</span>
+    </div>
+    <div class="source">
+      <label>Record
+        <select id="source">
+          <option value="mic">a microphone</option>
+          <option value="shared" id="source-shared">a meeting: audio of a shared tab or screen</option>
+        </select>
+      </label>
+      <label id="source-mic-label">Microphone
+        <select id="source-mic"><option value="">Default</option></select>
+      </label>
+      <label id="source-with-mic-label" class="inline" hidden><input type="checkbox" id="source-with-mic" checked> Also record my microphone</label>
     </div>
     <div id="so-far" class="so-far" hidden></div>
     <div id="drop" class="drop" tabindex="0" role="button">
@@ -277,14 +295,92 @@ let recording = null;
 
 function recordNote(...content) { $("record-note").replaceChildren(...content); }
 
+// What is recorded: a microphone or other input device (a virtual loopback
+// device such as BlackHole or VB-Cable appears here too), the audio of a
+// shared tab or screen, or the shared audio mixed with the microphone.
+const SOURCE_KEY = "scribe.source";
+const remembered = (key) => { try { return localStorage.getItem(key) || ""; } catch (_) { return ""; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
+
+function showSourceChoices() {
+  const shared = $("source").value === "shared";
+  $("source-mic-label").hidden = shared && $("source-with-mic").checked === false;
+  $("source-with-mic-label").hidden = !shared;
+}
+
+async function listMicrophones() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  const chosen = $("source-mic").value || remembered(SOURCE_KEY + ".mic");
+  const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audioinput");
+  const options = [el("option", { value: "" }, "Default")];
+  devices.forEach((device, index) => {
+    if (device.deviceId === "default" || device.deviceId === "communications") return;
+    options.push(el("option", { value: device.deviceId }, device.label || `Input ${index + 1}`));
+  });
+  $("source-mic").replaceChildren(...options);
+  if ([...$("source-mic").options].some((option) => option.value === chosen)) $("source-mic").value = chosen;
+}
+
+function initSource() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) $("source-shared").remove();
+  else if (remembered(SOURCE_KEY) === "shared") $("source").value = "shared";
+  $("source-with-mic").checked = remembered(SOURCE_KEY + ".with-mic") !== "no";
+  $("source").onchange = () => { remember(SOURCE_KEY, $("source").value); showSourceChoices(); };
+  $("source-mic").onchange = () => remember(SOURCE_KEY + ".mic", $("source-mic").value);
+  $("source-with-mic").onchange = () => {
+    remember(SOURCE_KEY + ".with-mic", $("source-with-mic").checked ? "yes" : "no");
+    showSourceChoices();
+  };
+  showSourceChoices();
+  listMicrophones().catch(() => {});
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", () => listMicrophones().catch(() => {}));
+  }
+}
+
+async function microphoneStream() {
+  const deviceId = $("source-mic").value;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true });
+  listMicrophones().catch(() => {});  // names are only known once access has been given
+  return stream;
+}
+
+// Returns the stream to record and what must be released when it ends.
+async function sourceStream() {
+  if ($("source").value !== "shared") return { stream: await microphoneStream(), release: [] };
+  let shared;
+  try { shared = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); }
+  catch (error) { throw new Error(`Sharing was not started (${error.message}).`); }
+  shared.getVideoTracks().forEach((track) => track.stop());
+  if (!shared.getAudioTracks().length) {
+    shared.getTracks().forEach((track) => track.stop());
+    throw new Error("The shared screen or tab has no audio. Choose a browser tab, or on Windows the entire screen, and tick "
+                    + "\"Share audio\". Chrome and Edge can do this; Firefox and Safari cannot. See docs/how-to/recording.md for other ways.");
+  }
+  if (!$("source-with-mic").checked) return { stream: new MediaStream(shared.getAudioTracks()), release: [shared], shared };
+  let microphone;
+  try { microphone = await microphoneStream(); }
+  catch (error) { shared.getTracks().forEach((track) => track.stop()); throw error; }
+  const context = new AudioContext();
+  const mixed = context.createMediaStreamDestination();
+  context.createMediaStreamSource(new MediaStream(shared.getAudioTracks())).connect(mixed);
+  context.createMediaStreamSource(microphone).connect(mixed);
+  return { stream: mixed.stream, release: [shared, microphone], context, shared };
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices || !window.MediaRecorder) {
-    alert("This browser cannot record here. Microphone access needs http://localhost or HTTPS.");
+    alert("This browser cannot record here. Audio capture needs http://localhost or HTTPS.");
     return;
   }
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (error) { alert(`The microphone cannot be used: ${error.message}`); return; }
+  let source;
+  try { source = await sourceStream(); }
+  catch (error) { alert(`The audio cannot be recorded: ${error.message}`); return; }
+  const stream = source.stream;
+  const releaseSource = () => {
+    [stream, ...source.release].forEach((each) => each.getTracks().forEach((track) => track.stop()));
+    if (source.context) source.context.close().catch(() => {});
+  };
   const [mime, extension] = FORMATS.find(([type]) => MediaRecorder.isTypeSupported(type)) || ["", "webm"];
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -296,10 +392,10 @@ async function startRecording() {
   form.append("diarize", $("diarize").checked ? "" : "false");
   let job;
   try { job = await (await api("/api/recordings", { method: "POST", body: form })).json(); }
-  catch (error) { stream.getTracks().forEach((track) => track.stop()); alert(error.message); return; }
+  catch (error) { releaseSource(); alert(error.message); return; }
 
   const media = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-  const current = { job, media, stream, mime: media.mimeType || mime, pieces: [], sent: 0,
+  const current = { job, media, releaseSource, mime: media.mimeType || mime, pieces: [], sent: 0,
                     sending: Promise.resolve(), problem: null, started: Date.now() };
   media.ondataavailable = (event) => {
     if (!event.data.size) return;
@@ -307,6 +403,10 @@ async function startRecording() {
     current.sending = current.sending.then(() => sendPiece(current, event.data));
   };
   media.onstop = () => finishRecording(current);
+  // Stopping the share from the browser's own bar ends the recording like Stop does.
+  if (source.shared) source.shared.getAudioTracks().forEach((track) => {
+    track.onended = () => { if (media.state !== "inactive") media.stop(); };
+  });
   media.start(PIECE_MS);
   recording = current;
   $("record").textContent = "Stop";
@@ -342,7 +442,7 @@ async function sendPiece(current, piece) {
 }
 
 async function finishRecording(current) {
-  current.stream.getTracks().forEach((track) => track.stop());
+  current.releaseSource();
   recording = null;
   $("record").textContent = "Record";
   $("record").className = "primary";
@@ -386,6 +486,7 @@ $("record").onclick = () => {
   if (!recording) startRecording();
   else if (recording.media.state !== "inactive") recording.media.stop();
 };
+initSource();
 window.addEventListener("beforeunload", (event) => { if (recording) event.preventDefault(); });
 setInterval(refreshRecording, 1000);
 

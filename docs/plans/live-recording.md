@@ -33,8 +33,8 @@ form.
 
 - Identifying speakers while the recording runs (the larger saving, but it
   means working below pyannote's standard interface).
-- Capturing the sound of other applications (a video call's far end); the
-  page records the microphone.
+- Capturing the sound of other applications: added later, see
+  [audio-source.md](audio-source.md).
 - Pausing and resuming a recording.
 - Making speaker identification itself faster.
 

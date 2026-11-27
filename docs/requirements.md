@@ -15,9 +15,9 @@ Each requirement has an ID. The executable specifications in
 | Integrator | Submit files and fetch results from scripts over HTTP. |
 
 Out of scope: identifying speakers while a recording is still going on,
-recording the sound of other applications, user accounts and authentication,
-summarisation or any other language-model post-processing, speaker recognition
-across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
+user accounts and authentication, summarisation or any other language-model
+post-processing, speaker recognition across files (a "Speaker 1" in one file
+is unrelated to "Speaker 1" in another).
 
 ## 2. Functional requirements
 
@@ -45,7 +45,7 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 
 | ID | Requirement |
 | --- | --- |
-| FR-50 | A recording can be made in the web page (microphone) or sent through the HTTP API piece by piece; the audio is stored on the server as it arrives. |
+| FR-50 | A recording can be made in the web page (see FR-59 for what it records) or sent through the HTTP API piece by piece; the audio is stored on the server as it arrives. |
 | FR-51 | Speech-to-text starts while the recording is still going on, so that when it ends only the remainder is left to transcribe. |
 | FR-52 | Text is kept only once it is settled: the newest seconds are transcribed again when more audio has arrived, and a piece ends where the recogniser ends a sentence, so no sentence is cut in two. |
 | FR-53 | When the recording ends, speakers are identified over the whole recording, and the result is a job and a transcript like those of any file: all formats, archived original, speaker names, re-run. |
@@ -54,6 +54,7 @@ across files (a "Speaker 1" in one file is unrelated to "Speaker 1" in another).
 | FR-56 | A recording that receives no audio for a configurable time (a closed browser, a lost connection) is ended automatically and transcribed with what arrived. |
 | FR-57 | A recording in progress does not occupy a worker: other jobs are processed in between. What has been transcribed survives a restart or crash of the worker. |
 | FR-58 | A recording that has ended or was cancelled accepts no more audio; one that ends without any audio leaves no job, transcript or file behind; it is not reported as recording once it has failed or been cancelled. |
+| FR-59 | The web page lets the user choose what to record: a microphone or other input device (including a virtual loopback device), the audio of a shared browser tab or screen (such as a video call), or that audio together with the microphone. A source without any audio is reported instead of being recorded silently. |
 
 ### Output
 

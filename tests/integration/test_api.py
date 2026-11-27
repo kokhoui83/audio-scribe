@@ -333,3 +333,10 @@ def test_the_web_page_is_served(api):
 def test_the_web_page_can_record(api):
     page = api.http.get("/").text
     assert 'id="record"' in page and "/api/recordings" in page
+
+
+@pytest.mark.__getattr__("FR-59")
+def test_the_web_page_can_record_other_sources_than_the_default_microphone(api):
+    page = api.http.get("/").text
+    assert 'id="source"' in page and 'id="source-mic"' in page
+    assert "getDisplayMedia" in page and "deviceId" in page and "enumerateDevices" in page
