@@ -43,7 +43,8 @@ same queue:
 worker image carries PyTorch and the models; it is built for CPU or for CUDA
 through a build argument. A third variant, `audio-scribe-worker-vulkan`, adds
 whisper.cpp built with Vulkan. For Apple Metal the worker runs on the host
-(`scripts/host-worker.sh`) against the same database and data folder.
+(`scripts/host-worker.sh`) against the same database and data folder;
+`scripts/mac.sh` starts and stops it together with the containers.
 
 All services mount the same `data/` folder. Models are cached in the `models`
 volume, the database in the `db` volume.
