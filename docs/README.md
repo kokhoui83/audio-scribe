@@ -21,5 +21,5 @@
 
 - [Development](how-to/development.md)
 - [Rules for contributors and coding agents](../AGENTS.md)
-- Plans of larger features: [live recording](plans/live-recording.md)
+- Plans of larger features: [live recording](plans/live-recording.md), [audio source](plans/audio-source.md)
 - [To do](todo.md) — open work, such as checks on hardware nobody had at hand

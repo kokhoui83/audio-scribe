@@ -6,7 +6,7 @@
 flowchart LR
     operator([Operator]) -- drops files --> inbox[(data/inbox)]
     script([Script]) -- HTTP: uploads,<br/>audio piece by piece --> api
-    user([User]) -- browser: uploads,<br/>microphone recording --> api
+    user([User]) -- browser: uploads,<br/>microphone, meeting or shared-tab recording --> api
     subgraph compose [Docker Compose]
         watcher -- queues jobs --> db[(PostgreSQL<br/>jobs = queue<br/>transcripts, drafts)]
         api -- jobs, status,<br/>text so far --> db
